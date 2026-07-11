@@ -14,27 +14,39 @@ struct RearHit {
   let confidence: String  // "low" | "medium" | "high"
 }
 
-/// Owns the ARKit world-tracking session used by both rear modes.
-/// - rearCrosshair: raycasts from screen center every frame (throttled to
-///   `updateHz`) and emits smoothed distance events.
-/// - rearTap: `measure(at:)` places a world anchor + marker; the frame loop
-///   keeps emitting the live camera→anchor distance for the latest anchor.
+/// Owns the ARKit world-tracking session.
+/// - auto mode: forwards a FrameInput per frame to the FishPipeline (which
+///   throttles/drops on its own queue).
+/// - manual mode: crosshair distance events + tap anchors + projected points,
+///   carried over from the distance app unchanged.
 final class SessionController: NSObject, ARSessionDelegate {
   private let arView: ARView
   private weak var host: FishARView?
+  weak var pipeline: FishPipeline?
   let smoother = DistanceSmoother()
 
   var updateHz: Double = 15
   var showMarkers = true
-  /// Set while heatmap mode is active; receives sceneDepth at the event rate.
-  var onDepthFrame: ((CVPixelBuffer) -> Void)?
-  var mode: String = "rearCrosshair" {
+  var mode: String = "manual" {
     didSet {
       if mode != oldValue {
         smoother.reset()
       }
     }
   }
+  /// Session-level options. Changing them while running restarts the session
+  /// (config changes only apply on run).
+  var enableSceneReconstruction = true {
+    didSet { restartIfNeeded(changed: oldValue != enableSceneReconstruction) }
+  }
+  var enableHighResCapture = true {
+    didSet { restartIfNeeded(changed: oldValue != enableHighResCapture) }
+  }
+  /// "raw" | "smoothed" — which depth map feeds the pipeline.
+  var depthSource = "smoothed"
+  /// Set while the debug depth overlay is active; receives the depth map at
+  /// the event rate.
+  var onDepthFrame: ((CVPixelBuffer) -> Void)?
 
   private var anchors: [String: AnchorEntity] = [:]
   private var anchorOrder: [String] = []
@@ -43,10 +55,19 @@ final class SessionController: NSObject, ARSessionDelegate {
   private var trackingNormal = false
   private(set) var isRunning = false
 
+  var session: ARSession { arView.session }
+
   init(arView: ARView, host: FishARView) {
     self.arView = arView
     self.host = host
     super.init()
+  }
+
+  private func restartIfNeeded(changed: Bool) {
+    if changed && isRunning {
+      pause()
+      start()
+    }
   }
 
   func start() {
@@ -57,13 +78,23 @@ final class SessionController: NSObject, ARSessionDelegate {
     }
 
     let config = ARWorldTrackingConfiguration()
-    if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-      config.sceneReconstruction = .meshWithClassification
-    } else if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-      config.sceneReconstruction = .mesh
+    if enableSceneReconstruction {
+      if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
+        config.sceneReconstruction = .meshWithClassification
+      } else if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+        config.sceneReconstruction = .mesh
+      }
     }
+    // Both depth semantics when available; FrameInput picks per depthSource.
     if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
       config.frameSemantics.insert(.sceneDepth)
+    }
+    if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+      config.frameSemantics.insert(.smoothedSceneDepth)
+    }
+    if enableHighResCapture,
+       let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
+      config.videoFormat = format
     }
     config.planeDetection = [.horizontal, .vertical]
 
@@ -86,9 +117,41 @@ final class SessionController: NSObject, ARSessionDelegate {
     arView.session.pause()
     isRunning = false
     trackingNormal = false
+    pipeline?.stop()
   }
 
-  // MARK: - Measurement
+  // MARK: - FrameInput construction
+
+  /// Builds the pipeline's view of a frame. Cheap: buffer refs plus the
+  /// display transform, no copies. Returns nil until depth is flowing.
+  func makeFrameInput(from frame: ARFrame) -> FrameInput? {
+    let depth = depthSource == "raw"
+      ? (frame.sceneDepth ?? frame.smoothedSceneDepth)
+      : (frame.smoothedSceneDepth ?? frame.sceneDepth)
+    guard let depth else { return nil }
+    let bounds = arView.bounds.size
+    guard bounds.width > 0, bounds.height > 0 else { return nil }
+    let image = frame.capturedImage
+    return FrameInput(
+      capturedImage: image,
+      depthMap: depth.depthMap,
+      confidenceMap: depth.confidenceMap,
+      intrinsics: frame.camera.intrinsics,
+      cameraTransform: frame.camera.transform,
+      imageWidth: CVPixelBufferGetWidth(image),
+      imageHeight: CVPixelBufferGetHeight(image),
+      displayTransform: frame.displayTransform(for: .portrait, viewportSize: bounds),
+      viewSize: bounds,
+      timestamp: frame.timestamp)
+  }
+
+  /// On-demand FrameInput for manual-path measurement and captures.
+  func currentFrameInput() -> FrameInput? {
+    guard let frame = arView.session.currentFrame else { return nil }
+    return makeFrameInput(from: frame)
+  }
+
+  // MARK: - Measurement (manual mode)
 
   private var cameraPosition: SIMD3<Float> {
     arView.cameraTransform.translation
@@ -128,8 +191,8 @@ final class SessionController: NSObject, ARSessionDelegate {
     return nil
   }
 
-  /// Tap-to-measure: raycast, drop a world anchor (so ARKit keeps it glued to
-  /// the surface), and return the measurement. Returns nil on a miss.
+  /// Tap/crosshair measure: raycast, drop a world anchor (so ARKit keeps it
+  /// glued to the surface), and return the measurement. Nil on a miss.
   func measure(at point: CGPoint) -> [String: Any]? {
     guard isRunning else { return nil }
     guard let hit = hitTest(at: point) else { return nil }
@@ -157,6 +220,10 @@ final class SessionController: NSObject, ARSessionDelegate {
     ]
   }
 
+  func anchorPosition(id: String) -> SIMD3<Float>? {
+    anchors[id]?.position(relativeTo: nil)
+  }
+
   func clearAnchors() {
     for (_, anchor) in anchors {
       arView.scene.removeAnchor(anchor)
@@ -174,17 +241,22 @@ final class SessionController: NSObject, ARSessionDelegate {
   // MARK: - ARSessionDelegate
 
   func session(_ session: ARSession, didUpdate frame: ARFrame) {
+    // Auto mode: hand every frame to the pipeline; it throttles itself.
+    if mode == "auto", let input = makeFrameInput(from: frame) {
+      pipeline?.process(input)
+    }
+
     guard updateHz > 0 else { return }
     guard frame.timestamp - lastEventTimestamp >= 1.0 / updateHz else { return }
     lastEventTimestamp = frame.timestamp
-    guard mode == "rearCrosshair" || mode == "rearTap" || mode == "heatmap" else { return }
 
-    if mode == "heatmap", let depthMap = frame.sceneDepth?.depthMap {
-      onDepthFrame?(depthMap)
+    if let onDepthFrame, let depthMap = frame.sceneDepth?.depthMap {
+      onDepthFrame(depthMap)
     }
 
-    // Center-crosshair distance in all rear modes (in tap mode the JS
-    // readout can toggle to it; heatmap shows it under the crosshair).
+    guard mode == "manual" else { return }
+
+    // Center-crosshair distance drives the manual-mode readout.
     if arView.bounds.width > 0 {
       let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
       if let hit = hitTest(at: center) {
@@ -196,12 +268,12 @@ final class SessionController: NSObject, ARSessionDelegate {
     emitProjectedPoints()
   }
 
-  /// Screen-space projection of every tapped point plus its live distance to
-  /// the camera — the JS overlay draws lines/labels/fill from this.
+  /// Screen-space projection of every anchor plus its live camera distance —
+  /// the JS overlay draws markers/lines/labels from this.
   private func emitProjectedPoints() {
     guard !anchorOrder.isEmpty else {
       // Emit the empty set once (so JS clears the overlay), then stay quiet
-      // instead of spamming the bridge 30×/s with nothing.
+      // instead of spamming the bridge with nothing.
       if lastProjectedCount != 0 {
         host?.dispatchProjectedPoints(points: [])
         lastProjectedCount = 0

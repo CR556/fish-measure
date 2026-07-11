@@ -91,7 +91,6 @@ struct FrameInput {
   let displayTransform: CGAffineTransform
   let viewSize: CGSize
   let timestamp: TimeInterval
-  let tapHint: CGPoint?                // normalized view coords, sticky
 }
 
 struct SubjectSnapshot {
@@ -159,6 +158,16 @@ enum Orientation {
     case 2: return p                                  // .up: already sensor space
     case 3: return CGPoint(x: 1 - p.x, y: 1 - p.y)   // .down: 180°
     default: return CGPoint(x: p.y, y: 1 - p.x)      // .right
+    }
+  }
+
+  /// Inverse of orientedToSensorNorm.
+  static func sensorToOrientedNorm(_ p: CGPoint, mode: Int) -> CGPoint {
+    switch mode {
+    case 1: return CGPoint(x: p.y, y: 1 - p.x)
+    case 2: return p
+    case 3: return CGPoint(x: 1 - p.x, y: 1 - p.y)
+    default: return CGPoint(x: 1 - p.y, y: p.x)
     }
   }
 }
