@@ -1,5 +1,5 @@
-Pod::Spec.new do |s|
-  s.name           = 'FishMeasure'
+﻿Pod::Spec.new do |s|
+  s.name           = 'FishMeasureModule'
   s.version        = '1.0.0'
   s.summary        = 'LiDAR fish measurement pipeline'
   s.description    = 'ARKit + Vision pipeline that segments a fish, measures curved length via LiDAR depth, and captures catch artifacts.'
