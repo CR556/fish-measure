@@ -1,9 +1,37 @@
+import { saveImageToPhotos } from '../../modules/fish-measure';
 import { insertCatch } from '../db/catchRepo';
 import type { Catch } from '../db/types';
+import { speciesName } from '../data/species';
 import { deleteCatchDir, makeThumbnail, toRelative, writeContourJson } from '../lib/files';
+import { formatFishLength, formatFishWeight } from '../lib/fishUnits';
+import { getSettings } from '../stores/settingsStore';
 import type { CaptureDraft } from './draft';
 import { removeDraft } from './draft';
 import { requestId } from './idQueue';
+
+/** Optional: also drop the catch photo into the camera roll with metadata. */
+async function maybeSaveToPhotos(record: Catch, photoAbsPath: string): Promise<void> {
+  if (!getSettings().saveToPhotosOnKeep) return;
+  const system = record.unitsAtCapture;
+  const human =
+    `${speciesName(record.speciesId)} — ${formatFishLength(record.lengthCurvedM, system)}` +
+    (record.weightKg != null ? ` · ${formatFishWeight(record.weightKg, system)}` : '');
+  const json = JSON.stringify({
+    lengthCurvedM: record.lengthCurvedM,
+    lengthChordM: record.lengthChordM,
+    girthM: record.girthM,
+    weightKg: record.weightKg,
+    speciesId: record.speciesId,
+    measureMode: record.measureMode,
+  });
+  const gps =
+    record.lat != null && record.lon != null ? { lat: record.lat, lon: record.lon } : undefined;
+  try {
+    await saveImageToPhotos(photoAbsPath, json, human, gps);
+  } catch {
+    // Permission denied or save failed — the catch is still stored locally.
+  }
+}
 
 /**
  * Persists a reviewed draft: thumbnail + contour.json + DB row. Files already
@@ -60,6 +88,7 @@ export async function keepCatch(draft: CaptureDraft): Promise<string> {
 
   insertCatch(record);
   removeDraft(draft.id);
+  void maybeSaveToPhotos(record, draft.photoAbsPath);
   // Fire species/bait ID in the background (queues if offline / no key).
   // Never blocks Keep; the detail screen reflects the result when it lands.
   if (record.speciesSource !== 'user') {

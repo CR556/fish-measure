@@ -9,6 +9,7 @@ import { catchRevision } from '../capture/idQueue';
 import { speciesName } from '../data/species';
 import { distinctSpeciesIds, listCatches } from '../db/catchRepo';
 import type { CatchSort } from '../db/types';
+import { exportCatchesCsv } from '../lib/csv';
 import { resolveCatchUri } from '../lib/files';
 import { formatFishLength, formatFishWeight } from '../lib/fishUnits';
 import type { RootStackParamList } from '../navigation/types';
@@ -46,7 +47,14 @@ export function LogScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <Text style={styles.title}>Catches</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Catches</Text>
+        {rows.length > 0 ? (
+          <Pressable onPress={() => exportCatchesCsv(rows)} hitSlop={10}>
+            <Text style={styles.export}>Export CSV</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <FilterSortBar
         sort={sort}
         onSort={setSort}
@@ -97,14 +105,20 @@ export function LogScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#000' },
-  title: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '700',
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
   },
+  title: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  export: { color: '#0a84ff', fontSize: 15, fontWeight: '600' },
   row: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 10 },
   thumb: { width: 72, height: 72, borderRadius: 10, backgroundColor: '#111' },
   rowBody: { flex: 1, justifyContent: 'center', gap: 2 },

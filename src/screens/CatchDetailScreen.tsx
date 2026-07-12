@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ShareSheet } from '../components/export/ShareSheet';
 import { SpeciesSuggestions } from '../components/review/SpeciesSuggestions';
 import { catchRevision, retryId } from '../capture/idQueue';
 import { speciesName } from '../data/species';
@@ -31,6 +32,7 @@ export function CatchDetailScreen({ route, navigation }: Props) {
   const { catchId } = route.params;
   const rev = useSyncExternalStore(catchRevision.subscribe, catchRevision.get);
   const [retrying, setRetrying] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // Re-read whenever focus, the ID revision, or a retry changes.
   const item = React.useMemo(() => getCatch(catchId), [catchId, rev, isFocused, retrying]);
@@ -153,12 +155,17 @@ export function CatchDetailScreen({ route, navigation }: Props) {
             {item.lat != null ? ' · 📍 tagged' : ''}
           </Text>
 
+          <Pressable style={styles.share} onPress={() => setShareOpen(true)}>
+            <Text style={styles.shareText}>Share / export image</Text>
+          </Pressable>
+
           <Pressable style={styles.delete} onPress={onDelete}>
             <Text style={styles.deleteText}>Delete catch</Text>
           </Pressable>
-          <Text style={styles.footer}>Image exports & CSV arrive with the export update.</Text>
         </View>
       </ScrollView>
+
+      <ShareSheet item={item} visible={shareOpen} onClose={() => setShareOpen(false)} />
     </View>
   );
 }
@@ -188,7 +195,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   deleteText: { color: '#ff3b30', fontSize: 15, fontWeight: '600' },
-  footer: { color: 'rgba(255,255,255,0.4)', fontSize: 12.5, marginTop: 16 },
+  share: {
+    marginTop: 24,
+    backgroundColor: '#0a84ff',
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  shareText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   empty: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: 'rgba(255,255,255,0.7)', fontSize: 16 },
 });
