@@ -4,11 +4,15 @@ import { useCallback, useSyncExternalStore } from 'react';
 import type { UnitsSystem } from '../lib/fishUnits';
 import { createStore } from './fishStores';
 
+export type AiModelChoice = 'haiku' | 'sonnet';
+
 export type Settings = {
   unitsSystem: UnitsSystem;
   autoCapture: boolean;
   gpsEnabled: boolean;
   saveToPhotosOnKeep: boolean;
+  /** Which Claude model identifies the catch. Key lives in secure store. */
+  aiModel: AiModelChoice;
 };
 
 const DEFAULTS: Settings = {
@@ -16,6 +20,7 @@ const DEFAULTS: Settings = {
   autoCapture: true,
   gpsEnabled: true,
   saveToPhotosOnKeep: false,
+  aiModel: 'haiku',
 };
 
 const STORAGE_KEY = 'fish-measure.settings';

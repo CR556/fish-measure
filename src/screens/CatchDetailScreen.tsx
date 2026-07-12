@@ -1,21 +1,40 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useCallback, useMemo } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
+import React, { useCallback, useState, useSyncExternalStore } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { SpeciesSuggestions } from '../components/review/SpeciesSuggestions';
+import { catchRevision, retryId } from '../capture/idQueue';
 import { speciesName } from '../data/species';
-import { deleteCatch, getCatch } from '../db/catchRepo';
+import { deleteCatch, getCatch, updateCatch } from '../db/catchRepo';
+import { isQueued } from '../db/idQueueRepo';
 import { deleteCatchDir, resolveCatchUri } from '../lib/files';
+import { estimateWeight } from '../lib/weight';
 import { formatFishLength, formatFishLengthShort, formatFishWeight } from '../lib/fishUnits';
 import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CatchDetail'>;
 
-/** Minimal detail view (M6 adds exports, edit, map link). */
 export function CatchDetailScreen({ route, navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const { catchId } = route.params;
-  const item = useMemo(() => getCatch(catchId), [catchId]);
+  const rev = useSyncExternalStore(catchRevision.subscribe, catchRevision.get);
+  const [retrying, setRetrying] = useState(false);
+
+  // Re-read whenever focus, the ID revision, or a retry changes.
+  const item = React.useMemo(() => getCatch(catchId), [catchId, rev, isFocused, retrying]);
+  const queued = React.useMemo(() => isQueued(catchId), [catchId, rev, isFocused, retrying]);
 
   const onDelete = useCallback(() => {
     Alert.alert('Delete catch', 'This removes the catch and its files.', [
@@ -32,6 +51,40 @@ export function CatchDetailScreen({ route, navigation }: Props) {
     ]);
   }, [catchId, navigation]);
 
+  const acceptSpecies = useCallback(
+    (speciesId: string) => {
+      const current = getCatch(catchId);
+      if (!current) return;
+      const patch: Parameters<typeof updateCatch>[1] = {
+        speciesId,
+        speciesSource: 'user',
+        userCorrected: true,
+      };
+      if (current.weightSource !== 'user') {
+        const est = estimateWeight({
+          speciesId,
+          lengthCurvedM: current.lengthCurvedM,
+          girthM: current.girthM,
+        });
+        if (est) {
+          patch.weightKg = est.kg;
+          patch.weightFormula = est.formula;
+          patch.weightSource = 'auto';
+        }
+      }
+      updateCatch(catchId, patch);
+      catchRevision.set(catchRevision.get() + 1);
+    },
+    [catchId]
+  );
+
+  const onRetry = useCallback(async () => {
+    setRetrying(true);
+    await retryId(catchId);
+    setRetrying(false);
+    catchRevision.set(catchRevision.get() + 1);
+  }, [catchId]);
+
   if (!item) {
     return (
       <View style={styles.empty}>
@@ -41,6 +94,7 @@ export function CatchDetailScreen({ route, navigation }: Props) {
   }
 
   const system = item.unitsAtCapture;
+  const identifying = (queued || retrying) && item.speciesSource !== 'user';
 
   return (
     <View style={styles.container}>
@@ -53,7 +107,45 @@ export function CatchDetailScreen({ route, navigation }: Props) {
             {item.girthM != null ? ` · girth ${formatFishLengthShort(item.girthM, system)}` : ''}
             {item.weightKg != null ? ` · ${formatFishWeight(item.weightKg, system)}` : ''}
           </Text>
-          <Text style={styles.species}>{speciesName(item.speciesId)}</Text>
+          {item.weightFormula ? <Text style={styles.formula}>{item.weightFormula} · approximate</Text> : null}
+
+          <View style={styles.speciesRow}>
+            <Text style={styles.species}>{speciesName(item.speciesId)}</Text>
+            {identifying ? (
+              <View style={styles.identifying}>
+                <ActivityIndicator size="small" color="#0a84ff" />
+                <Text style={styles.identifyingText}>identifying…</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {item.aiSuggestions?.length ? (
+            <SpeciesSuggestions
+              suggestions={item.aiSuggestions}
+              activeSpeciesId={item.speciesId}
+              onPick={acceptSpecies}
+            />
+          ) : null}
+
+          <Pressable
+            style={styles.changeSpecies}
+            onPress={() =>
+              navigation.navigate('SpeciesPicker', {
+                target: 'catch',
+                catchId,
+                suggestions: item.aiSuggestions?.map((s) => s.speciesId),
+              })
+            }
+          >
+            <Text style={styles.changeSpeciesText}>Change species</Text>
+          </Pressable>
+
+          {!queued && item.speciesSource !== 'user' && !item.aiSuggestions?.length ? (
+            <Pressable style={styles.retry} onPress={onRetry} disabled={retrying}>
+              <Text style={styles.retryText}>{retrying ? 'Identifying…' : 'Retry identification'}</Text>
+            </Pressable>
+          ) : null}
+
           {item.bait ? <Text style={styles.meta}>Bait: {item.bait}</Text> : null}
           {item.notes ? <Text style={styles.meta}>{item.notes}</Text> : null}
           <Text style={styles.meta}>
@@ -61,9 +153,9 @@ export function CatchDetailScreen({ route, navigation }: Props) {
             {item.lat != null ? ' · 📍 tagged' : ''}
           </Text>
 
-          <TouchableOpacity style={styles.delete} onPress={onDelete}>
+          <Pressable style={styles.delete} onPress={onDelete}>
             <Text style={styles.deleteText}>Delete catch</Text>
-          </TouchableOpacity>
+          </Pressable>
           <Text style={styles.footer}>Image exports & CSV arrive with the export update.</Text>
         </View>
       </ScrollView>
@@ -77,7 +169,15 @@ const styles = StyleSheet.create({
   body: { padding: 20, gap: 6 },
   length: { color: '#fff', fontSize: 36, fontWeight: '700', fontVariant: ['tabular-nums'] },
   sub: { color: 'rgba(255,255,255,0.6)', fontSize: 14 },
-  species: { color: '#fff', fontSize: 18, fontWeight: '600', marginTop: 10 },
+  formula: { color: 'rgba(255,255,255,0.4)', fontSize: 12 },
+  speciesRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 },
+  species: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  identifying: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  identifyingText: { color: '#0a84ff', fontSize: 13 },
+  changeSpecies: { paddingTop: 10 },
+  changeSpeciesText: { color: '#0a84ff', fontSize: 15 },
+  retry: { paddingTop: 6 },
+  retryText: { color: '#0a84ff', fontSize: 15 },
   meta: { color: 'rgba(255,255,255,0.6)', fontSize: 14 },
   delete: {
     marginTop: 28,

@@ -5,6 +5,7 @@ import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { isLidarSupported } from './modules/fish-measure';
+import { initIdQueue } from './src/capture/idQueue';
 import { UnsupportedDevice } from './src/components/UnsupportedDevice';
 import type { RootStackParamList } from './src/navigation/types';
 import { RootTabs } from './src/navigation/RootTabs';
@@ -26,6 +27,10 @@ const capabilities = detectCapabilities();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
+  React.useEffect(() => {
+    if (capabilities.lidar) initIdQueue();
+  }, []);
+
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />

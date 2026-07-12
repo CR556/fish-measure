@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ApiKeySection } from '../components/settings/ApiKeySection';
 import { useSettings } from '../stores/settingsStore';
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -21,7 +22,10 @@ export function SettingsScreen() {
   const [settings, update] = useSettings();
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingTop: insets.top + 16 }}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 60 }}
+    >
       <Text style={styles.title}>Settings</Text>
 
       <Row label="Units">
@@ -78,9 +82,8 @@ export function SettingsScreen() {
         />
       </Row>
 
-      <Text style={styles.footer}>
-        Fish ID setup (cloud) arrives with the species milestone.
-      </Text>
+      <View style={styles.divider} />
+      <ApiKeySection />
     </ScrollView>
   );
 }
@@ -142,10 +145,9 @@ const styles = StyleSheet.create({
   segmentTextActive: {
     color: '#000',
   },
-  footer: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 12.5,
-    marginTop: 20,
-    marginBottom: 40,
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    marginTop: 16,
   },
 });

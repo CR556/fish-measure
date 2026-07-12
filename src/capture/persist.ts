@@ -3,6 +3,7 @@ import type { Catch } from '../db/types';
 import { deleteCatchDir, makeThumbnail, toRelative, writeContourJson } from '../lib/files';
 import type { CaptureDraft } from './draft';
 import { removeDraft } from './draft';
+import { requestId } from './idQueue';
 
 /**
  * Persists a reviewed draft: thumbnail + contour.json + DB row. Files already
@@ -59,6 +60,11 @@ export async function keepCatch(draft: CaptureDraft): Promise<string> {
 
   insertCatch(record);
   removeDraft(draft.id);
+  // Fire species/bait ID in the background (queues if offline / no key).
+  // Never blocks Keep; the detail screen reflects the result when it lands.
+  if (record.speciesSource !== 'user') {
+    void requestId(record.id);
+  }
   return record.id;
 }
 
