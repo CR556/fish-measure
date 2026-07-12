@@ -5,8 +5,11 @@ import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { isLidarSupported } from './modules/fish-measure';
-import { RootTabs } from './src/navigation/RootTabs';
 import { UnsupportedDevice } from './src/components/UnsupportedDevice';
+import type { RootStackParamList } from './src/navigation/types';
+import { RootTabs } from './src/navigation/RootTabs';
+import { CaptureReviewScreen } from './src/screens/CaptureReviewScreen';
+import { CatchDetailScreen } from './src/screens/CatchDetailScreen';
 
 function detectCapabilities() {
   try {
@@ -19,9 +22,7 @@ function detectCapabilities() {
 
 const capabilities = detectCapabilities();
 
-// Modal routes (CaptureReview, SpeciesPicker) and CatchDetail join this stack
-// in M3/M6 — the tabs stay the root screen.
-const Stack = createNativeStackNavigator();
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
   return (
@@ -31,6 +32,16 @@ export default function App() {
         <NavigationContainer theme={DarkTheme}>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             <Stack.Screen name="Tabs" component={RootTabs} />
+            <Stack.Screen
+              name="CaptureReview"
+              component={CaptureReviewScreen}
+              options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+            />
+            <Stack.Screen
+              name="CatchDetail"
+              component={CatchDetailScreen}
+              options={{ headerShown: true, title: 'Catch' }}
+            />
           </Stack.Navigator>
         </NavigationContainer>
       ) : (

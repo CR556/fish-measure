@@ -1,5 +1,6 @@
-import { useIsFocused } from '@react-navigation/native';
-import { Paths } from 'expo-file-system';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Crypto from 'expo-crypto';
 import * as Haptics from 'expo-haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -20,8 +21,11 @@ import { DebugHud } from '../components/measure/DebugHud';
 import { GhostFishOverlay } from '../components/measure/GhostFishOverlay';
 import { ManualOverlay } from '../components/measure/ManualOverlay';
 import { MeasurePill } from '../components/measure/MeasurePill';
+import { draftFromPayload, putDraft } from '../capture/draft';
+import { catchOutputDir } from '../lib/files';
 import { formatFishLength, formatFishLengthShort } from '../lib/fishUnits';
 import { ghostForView } from '../lib/ghostPath';
+import type { RootStackParamList } from '../navigation/types';
 import { useDistanceFeed } from '../hooks/useDistanceFeed';
 import {
   debugStore,
@@ -39,6 +43,7 @@ const AUTO_CAPTURE_COOLDOWN_MS = 3500;
 
 export function MeasureScreen() {
   const isFocused = useIsFocused();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const viewRef = useRef<FishMeasureViewRef>(null);
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
   const [viewSize, setViewSize] = useState<{ w: number; h: number } | null>(null);
@@ -55,6 +60,22 @@ export function MeasureScreen() {
     () => (viewSize ? ghostForView(viewSize.w, viewSize.h, CONTOUR_POINTS) : null),
     [viewSize]
   );
+
+  // Binary-surface diagnostic: the M0 baseline IPA has none of the fish
+  // methods; the Round 1 IPA has all of them. Logged to Metro on mount.
+  useEffect(() => {
+    if (!isFocused) return;
+    const t = setTimeout(() => {
+      const ref = viewRef.current as Record<string, unknown> | null;
+      console.log('[diag] native surface:', {
+        hasSetTapHint: typeof ref?.setTapHint === 'function',
+        hasCaptureAutoCatch: typeof ref?.captureAutoCatch === 'function',
+        hasMeasureAtPoint: typeof ref?.measureAtPoint === 'function',
+        refKeys: ref ? Object.keys(ref).slice(0, 20) : null,
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [isFocused, viewSize]);
 
   // Native events → external stores (never React state).
   const onSubject = useCallback((e: { nativeEvent: SubjectEvent }) => {
@@ -74,32 +95,36 @@ export function MeasureScreen() {
     []
   );
 
-  const makeOutputDir = useCallback(
-    () => `${Paths.document.uri.replace(/^file:\/\//, '')}/catches/pending-${Date.now()}`,
-    []
+  const openReview = useCallback(
+    (
+      id: string,
+      payload: Parameters<typeof draftFromPayload>[1]
+    ) => {
+      const draft = draftFromPayload(id, payload, getSettings().unitsSystem);
+      putDraft(draft);
+      navigation.navigate('CaptureReview', { draftId: id });
+    },
+    [navigation]
   );
 
   const doAutoCapture = useCallback(async () => {
     if (capturing.current) return;
     capturing.current = true;
     try {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      const payload = await viewRef.current?.captureAutoCatch({ outputDir: makeOutputDir() });
+      const id = Crypto.randomUUID();
+      const payload = await viewRef.current?.captureAutoCatch({ outputDir: catchOutputDir(id) });
       if (!payload) {
         setStatus('No solid measurement yet — get the outline to lock first');
         return;
       }
-      console.log('AUTO CAPTURE', payload.photoSource, payload.photoPath, payload.curvedM);
-      // M3 replaces this with the capture-review pop-up.
-      setStatus(
-        `Captured ${formatFishLength(payload.curvedM, getSettings().unitsSystem)} — review screen lands in M3`
-      );
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      openReview(id, payload);
     } catch (e) {
       setStatus(`Capture failed: ${String(e)}`);
     } finally {
       capturing.current = false;
     }
-  }, [makeOutputDir]);
+  }, [openReview]);
 
   // Auto-capture: edge-detect the stability gate outside React renders.
   useEffect(() => {
@@ -130,27 +155,25 @@ export function MeasureScreen() {
       setStatus('Point 1 set — line up the tail tip');
       return;
     }
-    const path = await viewRef.current?.measureManualPath(ids[0], ids[1], 64);
     const system = getSettings().unitsSystem;
-    if (path) {
+    const id = Crypto.randomUUID();
+    const payload = await viewRef.current?.captureManualCatch(ids[0], ids[1], {
+      outputDir: catchOutputDir(id),
+      includePly: false,
+      includeMaskPng: false,
+    });
+    await viewRef.current?.clearAnchors().catch(() => {});
+    setAnchorIds([]);
+    if (payload) {
       setStatus(
-        `${formatFishLength(path.curvedM, system)} along the body · ${formatFishLengthShort(path.chordM, system)} straight`
+        `${formatFishLength(payload.curvedM, system)} · ${formatFishLengthShort(payload.chordM, system)} straight`
       );
-      const payload = await viewRef.current?.captureManualCatch(ids[0], ids[1], {
-        outputDir: makeOutputDir(),
-        includePly: false,
-        includeMaskPng: false,
-      });
-      if (payload) {
-        console.log('MANUAL CAPTURE', payload.photoSource, payload.photoPath, payload.curvedM);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      openReview(id, payload);
     } else {
       setStatus('Could not read the path between the points');
     }
-    await viewRef.current?.clearAnchors().catch(() => {});
-    setAnchorIds([]);
-  }, [anchorIds, viewSize, makeOutputDir]);
+  }, [anchorIds, viewSize, openReview]);
 
   const handleClear = useCallback(() => {
     viewRef.current?.clearSubject().catch(() => {});
@@ -198,7 +221,10 @@ export function MeasureScreen() {
           onDebugInfo={onDebugInfo}
           onDistance={onDistance}
           onTrackingState={onTrackingState}
-          onError={(e) => setStatus(`${e.nativeEvent.code}: ${e.nativeEvent.message}`)}
+          onError={(e) => {
+            console.log('[diag] native error:', e.nativeEvent.code, e.nativeEvent.message);
+            setStatus(`${e.nativeEvent.code}: ${e.nativeEvent.message}`);
+          }}
         />
       ) : null}
 
