@@ -1,4 +1,9 @@
-import type { DebugInfoEvent, FishMeasurementEvent, SubjectEvent } from '../../modules/fish-measure';
+import type {
+  DebugInfoEvent,
+  FishMeasurementEvent,
+  ProjectedPointsEvent,
+  SubjectEvent,
+} from '../../modules/fish-measure';
 
 type Listener = () => void;
 
@@ -8,7 +13,7 @@ type Listener = () => void;
  * useSyncExternalStore re-render — never the screen tree. Routing 10–30 Hz
  * data through React state stalled the distance app; don't.
  */
-function createStore<T>(initial: T) {
+export function createStore<T>(initial: T) {
   let value = initial;
   const listeners = new Set<Listener>();
   return {
@@ -29,3 +34,5 @@ function createStore<T>(initial: T) {
 export const subjectStore = createStore<SubjectEvent | null>(null);
 export const measurementStore = createStore<FishMeasurementEvent | null>(null);
 export const debugStore = createStore<DebugInfoEvent | null>(null);
+/** Manual-mode anchor projections (native emits at updateHz). */
+export const projectedStore = createStore<ProjectedPointsEvent | null>(null);

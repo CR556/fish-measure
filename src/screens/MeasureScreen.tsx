@@ -1,187 +1,204 @@
 import { useIsFocused } from '@react-navigation/native';
-import { Canvas, Path, Skia } from '@shopify/react-native-skia';
 import { Paths } from 'expo-file-system';
-import React, { useCallback, useRef, useState, useSyncExternalStore } from 'react';
+import * as Haptics from 'expo-haptics';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type {
-  FishMeasureViewRef,
-  SubjectEvent,
+  DebugInfoEvent,
   FishMeasurementEvent,
+  FishMeasureViewRef,
+  ProjectedPointsEvent,
+  SubjectEvent,
   TrackingStateEvent,
 } from '../../modules/fish-measure';
 import { FishMeasureView } from '../../modules/fish-measure';
 import { CrosshairOverlay } from '../components/CrosshairOverlay';
 import { DistanceReadout } from '../components/DistanceReadout';
-import { measurementStore, subjectStore } from '../stores/fishStores';
+import { CaptureControls } from '../components/measure/CaptureControls';
+import { DebugHud } from '../components/measure/DebugHud';
+import { GhostFishOverlay } from '../components/measure/GhostFishOverlay';
+import { ManualOverlay } from '../components/measure/ManualOverlay';
+import { MeasurePill } from '../components/measure/MeasurePill';
+import { formatFishLength, formatFishLengthShort } from '../lib/fishUnits';
+import { ghostForView } from '../lib/ghostPath';
 import { useDistanceFeed } from '../hooks/useDistanceFeed';
-import { useUnits } from '../hooks/useUnits';
+import {
+  debugStore,
+  measurementStore,
+  projectedStore,
+  subjectStore,
+} from '../stores/fishStores';
+import { getSettings, useSettings } from '../stores/settingsStore';
 
-/**
- * M1 verification harness (replaced by the real UX in M2): draws the live
- * contour + spine, streams the classifier top-5 for acceptLabels tuning,
- * exercises tap-to-hint, auto capture, and the manual two-point flow.
- */
-
-function flatToPath(flat: number[] | undefined, close: boolean) {
-  if (!flat || flat.length < 6) return null;
-  const path = Skia.Path.Make();
-  path.moveTo(flat[0], flat[1]);
-  for (let i = 2; i + 1 < flat.length; i += 2) {
-    path.lineTo(flat[i], flat[i + 1]);
-  }
-  if (close) path.close();
-  return path;
-}
-
-/** Contour + spine, re-rendered from the store at native cadence. */
-function FishOverlay() {
-  const subject = useSyncExternalStore(subjectStore.subscribe, subjectStore.get);
-  const measurement = useSyncExternalStore(measurementStore.subscribe, measurementStore.get);
-  const contour = flatToPath(subject?.contour, true);
-  const spine = flatToPath(measurement?.centerline, false);
-  const locked = subject?.state === 'locked';
-  return (
-    <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
-      {contour ? (
-        <Path
-          path={contour}
-          style="stroke"
-          strokeWidth={3}
-          color={locked ? '#30d158' : '#ffd60a'}
-        />
-      ) : null}
-      {spine ? <Path path={spine} style="stroke" strokeWidth={2} color="#64d2ff" /> : null}
-    </Canvas>
-  );
-}
-
-function inches(m: number) {
-  return (m * 39.3701).toFixed(1);
-}
-
-/** Numbers + classifier labels, ~10 Hz re-render of small text only. */
-function DebugHud() {
-  const subject = useSyncExternalStore(subjectStore.subscribe, subjectStore.get);
-  const m = useSyncExternalStore(measurementStore.subscribe, measurementStore.get);
-  return (
-    <View style={styles.hud} pointerEvents="none">
-      <Text style={styles.hudTitle}>
-        {m?.valid
-          ? `${(m.curvedM * 100).toFixed(1)} cm / ${inches(m.curvedM)} in  ${m.stable ? '● stable' : '○'}`
-          : subject
-            ? `state: ${subject.state}`
-            : 'searching…'}
-      </Text>
-      {m?.valid ? (
-        <Text style={styles.hudLine}>
-          chord {(m.chordM * 100).toFixed(1)}cm · girth{' '}
-          {m.girthM ? `${(m.girthM * 100).toFixed(1)}cm (${m.girthMethod})` : '—'} · cov{' '}
-          {(m.depthCoverage * 100).toFixed(0)}% · {m.distanceM.toFixed(2)}m
-        </Text>
-      ) : null}
-      {subject ? (
-        <Text style={styles.hudLine}>
-          inst {subject.instanceCount} · by {subject.selectedBy ?? '—'} · elong{' '}
-          {subject.aspectRatio.toFixed(1)} · fish {subject.fishScore.toFixed(2)}
-        </Text>
-      ) : null}
-      {subject?.classifierTop.map((c) => (
-        <Text key={c.label} style={styles.hudLabel}>
-          {c.label} {(c.confidence * 100).toFixed(0)}%
-        </Text>
-      ))}
-    </View>
-  );
-}
+/** Must match the native overlay.contourMaxPoints so the morph is 1:1. */
+const CONTOUR_POINTS = 120;
+/** Ring fills over this much continuous stability, then auto-capture fires. */
+const STABLE_FIRE_MS = 900;
+const AUTO_CAPTURE_COOLDOWN_MS = 3500;
 
 export function MeasureScreen() {
   const isFocused = useIsFocused();
   const viewRef = useRef<FishMeasureViewRef>(null);
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');
+  const [viewSize, setViewSize] = useState<{ w: number; h: number } | null>(null);
   const [status, setStatus] = useState('');
+  const [showDebug, setShowDebug] = useState(false);
   const [anchorIds, setAnchorIds] = useState<string[]>([]);
-  const { unit, cycleUnit } = useUnits();
-  const { event: distanceEvent, stale, onDistance } = useDistanceFeed();
   const [tracking, setTracking] = useState<TrackingStateEvent>({ state: 'initializing' });
+  const [settings, updateSettings] = useSettings();
+  const { event: distanceEvent, stale: distanceStale, onDistance } = useDistanceFeed();
+  const lastAutoCaptureAt = useRef(0);
+  const capturing = useRef(false);
 
+  const ghost = useMemo(
+    () => (viewSize ? ghostForView(viewSize.w, viewSize.h, CONTOUR_POINTS) : null),
+    [viewSize]
+  );
+
+  // Native events → external stores (never React state).
   const onSubject = useCallback((e: { nativeEvent: SubjectEvent }) => {
     subjectStore.set(e.nativeEvent);
   }, []);
   const onFishMeasurement = useCallback((e: { nativeEvent: FishMeasurementEvent }) => {
     measurementStore.set(e.nativeEvent);
   }, []);
+  const onProjectedPoints = useCallback((e: { nativeEvent: ProjectedPointsEvent }) => {
+    projectedStore.set(e.nativeEvent);
+  }, []);
+  const onDebugInfo = useCallback((e: { nativeEvent: DebugInfoEvent }) => {
+    debugStore.set(e.nativeEvent);
+  }, []);
   const onTrackingState = useCallback(
     (e: { nativeEvent: TrackingStateEvent }) => setTracking(e.nativeEvent),
     []
   );
 
-  const spikeDir = `${Paths.document.uri.replace(/^file:\/\//, '')}/spike/${Date.now()}`;
+  const makeOutputDir = useCallback(
+    () => `${Paths.document.uri.replace(/^file:\/\//, '')}/catches/pending-${Date.now()}`,
+    []
+  );
 
-  const handleTap = useCallback((x: number, y: number) => {
-    viewRef.current?.setTapHint(x, y).catch(() => {});
-  }, []);
-
-  const captureAuto = useCallback(async () => {
+  const doAutoCapture = useCallback(async () => {
+    if (capturing.current) return;
+    capturing.current = true;
     try {
-      const payload = await viewRef.current?.captureAutoCatch({ outputDir: spikeDir });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      const payload = await viewRef.current?.captureAutoCatch({ outputDir: makeOutputDir() });
       if (!payload) {
-        setStatus('capture: no valid measurement');
+        setStatus('No solid measurement yet — get the outline to lock first');
         return;
       }
-      console.log('AUTO CAPTURE', JSON.stringify(payload).slice(0, 2000));
+      console.log('AUTO CAPTURE', payload.photoSource, payload.photoPath, payload.curvedM);
+      // M3 replaces this with the capture-review pop-up.
       setStatus(
-        `captured ${(payload.curvedM * 100).toFixed(1)}cm (${payload.photoSource} ${payload.photoWidth}px)` +
-          `${payload.plyPath ? ' +ply' : ''}${payload.maskPngPath ? ' +mask' : ''}`
+        `Captured ${formatFishLength(payload.curvedM, getSettings().unitsSystem)} — review screen lands in M3`
       );
     } catch (e) {
-      setStatus(`capture failed: ${String(e)}`);
+      setStatus(`Capture failed: ${String(e)}`);
+    } finally {
+      capturing.current = false;
     }
-  }, [spikeDir]);
+  }, [makeOutputDir]);
 
-  const captureManualPoint = useCallback(async () => {
-    const result = await viewRef.current?.measureAtPoint(190, 400); // near screen center; refined in M2
+  // Auto-capture: edge-detect the stability gate outside React renders.
+  useEffect(() => {
+    if (mode !== 'auto' || !isFocused) return;
+    return measurementStore.subscribe(() => {
+      const m = measurementStore.get();
+      if (!m?.stable || m.stableForMs < STABLE_FIRE_MS) return;
+      if (!getSettings().autoCapture) return;
+      if (subjectStore.get()?.state !== 'locked') return;
+      const now = Date.now();
+      if (now - lastAutoCaptureAt.current < AUTO_CAPTURE_COOLDOWN_MS) return;
+      lastAutoCaptureAt.current = now;
+      void doAutoCapture();
+    });
+  }, [mode, isFocused, doAutoCapture]);
+
+  const handleManualPoint = useCallback(async () => {
+    if (!viewSize) return;
+    const result = await viewRef.current?.measureAtPoint(viewSize.w / 2, viewSize.h / 2);
     if (!result) {
-      setStatus('manual: no surface hit');
+      setStatus('No surface under the crosshair — move a little');
       return;
     }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const ids = [...anchorIds, result.anchorId];
     setAnchorIds(ids);
-    setStatus(`point ${ids.length} @ ${result.meters.toFixed(2)}m (${result.method})`);
-    if (ids.length === 2) {
-      const path = await viewRef.current?.measureManualPath(ids[0], ids[1], 64);
-      if (path) {
-        setStatus(
-          `manual ${(path.curvedM * 100).toFixed(1)}cm curved / ${(path.chordM * 100).toFixed(1)}cm chord · valid ${(path.validFraction * 100).toFixed(0)}%`
-        );
-        const payload = await viewRef.current?.captureManualCatch(ids[0], ids[1], {
-          outputDir: spikeDir,
-          includePly: false,
-          includeMaskPng: false,
-        });
-        if (payload) {
-          console.log('MANUAL CAPTURE', JSON.stringify(payload).slice(0, 2000));
-        }
-      }
-      await viewRef.current?.clearAnchors();
-      setAnchorIds([]);
+    if (ids.length < 2) {
+      setStatus('Point 1 set — line up the tail tip');
+      return;
     }
-  }, [anchorIds, spikeDir]);
+    const path = await viewRef.current?.measureManualPath(ids[0], ids[1], 64);
+    const system = getSettings().unitsSystem;
+    if (path) {
+      setStatus(
+        `${formatFishLength(path.curvedM, system)} along the body · ${formatFishLengthShort(path.chordM, system)} straight`
+      );
+      const payload = await viewRef.current?.captureManualCatch(ids[0], ids[1], {
+        outputDir: makeOutputDir(),
+        includePly: false,
+        includeMaskPng: false,
+      });
+      if (payload) {
+        console.log('MANUAL CAPTURE', payload.photoSource, payload.photoPath, payload.curvedM);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
+    } else {
+      setStatus('Could not read the path between the points');
+    }
+    await viewRef.current?.clearAnchors().catch(() => {});
+    setAnchorIds([]);
+  }, [anchorIds, viewSize, makeOutputDir]);
+
+  const handleClear = useCallback(() => {
+    viewRef.current?.clearSubject().catch(() => {});
+    viewRef.current?.clearAnchors().catch(() => {});
+    // Stale store values would leak between modes (the pill would show the
+    // last auto measurement while in manual).
+    subjectStore.set(null);
+    measurementStore.set(null);
+    projectedStore.set(null);
+    setAnchorIds([]);
+    setStatus('');
+  }, []);
+
+  const handleToggleMode = useCallback(() => {
+    handleClear();
+    setMode((m) => (m === 'auto' ? 'manual' : 'auto'));
+  }, [handleClear]);
+
+  const segmentationProp = useMemo(
+    () => (ghost ? { priorityRegion: ghost.regionNorm } : undefined),
+    [ghost]
+  );
 
   return (
-    <View style={styles.container}>
-      {isFocused ? (
+    <View
+      style={styles.container}
+      onLayout={(e) =>
+        setViewSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })
+      }
+    >
+      {isFocused && viewSize ? (
         <FishMeasureView
           ref={viewRef}
           style={StyleSheet.absoluteFill}
           mode={mode}
           updateHz={30}
-          debugMode
+          showNativeMarkers={false}
+          segmentation={segmentationProp}
+          overlay={{ contourMaxPoints: CONTOUR_POINTS, emitCenterline: true }}
+          debugMode={showDebug}
+          debugDepthOverlay={false}
           onSubject={onSubject}
           onFishMeasurement={onFishMeasurement}
+          onProjectedPoints={onProjectedPoints}
+          onDebugInfo={onDebugInfo}
           onDistance={onDistance}
           onTrackingState={onTrackingState}
-          onError={(e) => setStatus(`error: ${e.nativeEvent.code}`)}
+          onError={(e) => setStatus(`${e.nativeEvent.code}: ${e.nativeEvent.message}`)}
         />
       ) : null}
 
@@ -189,56 +206,63 @@ export function MeasureScreen() {
         <>
           <Pressable
             style={StyleSheet.absoluteFill}
-            onPress={(e) => handleTap(e.nativeEvent.locationX, e.nativeEvent.locationY)}
+            onPress={(e) => {
+              viewRef.current
+                ?.setTapHint(e.nativeEvent.locationX, e.nativeEvent.locationY)
+                .catch(() => {});
+            }}
           />
-          <FishOverlay />
-          <DebugHud />
+          {ghost ? <GhostFishOverlay ghostFlat={ghost.flat} /> : null}
         </>
       ) : (
         <>
           <CrosshairOverlay />
-          <DistanceReadout
-            meters={distanceEvent?.meters ?? null}
-            confidence={distanceEvent?.confidence ?? null}
-            stale={stale}
-            unit={unit}
-            tracking={tracking}
-            onPress={cycleUnit}
-          />
+          <ManualOverlay />
         </>
       )}
 
+      {mode === 'auto' ? (
+        <MeasurePill
+          unitsSystem={settings.unitsSystem}
+          onPress={() =>
+            updateSettings({
+              unitsSystem: settings.unitsSystem === 'imperial' ? 'metric' : 'imperial',
+            })
+          }
+          onLongPress={() => setShowDebug((v) => !v)}
+        />
+      ) : (
+        <DistanceReadout
+          meters={distanceEvent?.meters ?? null}
+          confidence={distanceEvent?.confidence ?? null}
+          stale={distanceStale}
+          unit={settings.unitsSystem === 'imperial' ? 'ft' : 'm'}
+          tracking={tracking}
+          onPress={() =>
+            updateSettings({
+              unitsSystem: settings.unitsSystem === 'imperial' ? 'metric' : 'imperial',
+            })
+          }
+          onLongPress={() => setShowDebug((v) => !v)}
+        />
+      )}
+
+      {tracking.state !== 'normal' && tracking.state !== 'initializing' ? (
+        <Text style={styles.trackingBanner}>
+          {tracking.reason === 'excessiveMotion' ? 'Hold the phone steadier…' : 'Scanning…'}
+        </Text>
+      ) : null}
+
+      {showDebug ? <DebugHud /> : null}
       {status ? <Text style={styles.status}>{status}</Text> : null}
 
-      <View style={styles.controls}>
-        <Pressable
-          style={styles.button}
-          onPress={() => {
-            setMode((m) => (m === 'auto' ? 'manual' : 'auto'));
-            setAnchorIds([]);
-            viewRef.current?.clearAnchors().catch(() => {});
-          }}
-        >
-          <Text style={styles.buttonText}>{mode === 'auto' ? 'Manual' : 'Auto'}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.capture]}
-          onPress={mode === 'auto' ? captureAuto : captureManualPoint}
-        >
-          <Text style={styles.buttonText}>{mode === 'auto' ? 'Capture' : `Point ${anchorIds.length + 1}`}</Text>
-        </Pressable>
-        <Pressable
-          style={styles.button}
-          onPress={() => {
-            viewRef.current?.clearSubject().catch(() => {});
-            viewRef.current?.clearAnchors().catch(() => {});
-            setAnchorIds([]);
-            setStatus('');
-          }}
-        >
-          <Text style={styles.buttonText}>Clear</Text>
-        </Pressable>
-      </View>
+      <CaptureControls
+        mode={mode}
+        manualPointCount={anchorIds.length}
+        onCapture={mode === 'auto' ? doAutoCapture : handleManualPoint}
+        onToggleMode={handleToggleMode}
+        onClear={handleClear}
+      />
     </View>
   );
 }
@@ -248,33 +272,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  hud: {
+  trackingBanner: {
     position: 'absolute',
-    top: 60,
-    left: 12,
-    right: 12,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    borderRadius: 12,
-    padding: 10,
-  },
-  hudTitle: {
+    top: 96,
+    alignSelf: 'center',
     color: '#fff',
-    fontSize: 22,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-  },
-  hudLine: {
-    color: 'rgba(255,255,255,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     fontSize: 13,
-    fontVariant: ['tabular-nums'],
-  },
-  hudLabel: {
-    color: '#ffd60a',
-    fontSize: 12,
   },
   status: {
     position: 'absolute',
-    bottom: 96,
+    bottom: 118,
     alignSelf: 'center',
     color: '#fff',
     backgroundColor: 'rgba(0,0,0,0.65)',
@@ -282,28 +293,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     fontSize: 13,
-  },
-  controls: {
-    position: 'absolute',
-    bottom: 24,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  button: {
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    borderRadius: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  capture: {
-    backgroundColor: 'rgba(48,209,88,0.85)',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
+    maxWidth: '86%',
+    textAlign: 'center',
   },
 });
