@@ -93,7 +93,7 @@ final class FishClassifier {
     let w = oriented.extent.width
     let h = oriented.extent.height
 
-    let pad = 0.15
+    let pad: CGFloat = 0.15
     let bx = max(0, bboxOrientedNorm.origin.x - bboxOrientedNorm.width * pad)
     let by = max(0, bboxOrientedNorm.origin.y - bboxOrientedNorm.height * pad)
     let bw = min(1 - bx, bboxOrientedNorm.width * (1 + 2 * pad))

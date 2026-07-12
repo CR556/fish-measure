@@ -92,7 +92,7 @@ final class SubjectSegmenter {
           let c = s.centroid
           let d = hypot(c.x / Double(labelMap.width) - tap.x, c.y / Double(labelMap.height) - tap.y)
           if d < 0.25 && (best == nil || d < best!.2) {
-            best = (label, s, d)
+            best = (label, s, Double(d))
           }
         }
         if let best {
@@ -113,7 +113,7 @@ final class SubjectSegmenter {
       for (label, s) in statsByInstance where gated(s) {
         let overlap = s.bbox.intersection(regionPx)
         guard !overlap.isNull, overlap.width > 0 else { continue }
-        let a = overlap.width * overlap.height
+        let a = Double(overlap.width) * Double(overlap.height)
         if best == nil || a > best!.2 {
           best = (label, s, a)
         }
