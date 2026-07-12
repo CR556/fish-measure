@@ -176,10 +176,10 @@ enum CameraMath {
   /// Unproject a sensor-space pixel + depth into camera space
   /// (ARKit convention: +X right, +Y up, camera looks down −Z).
   static func unproject(u: Double, v: Double, depth: Double, intrinsics: simd_float3x3) -> SIMD3<Float> {
-    let fx = Double(intrinsics[0, 0])
-    let fy = Double(intrinsics[1, 1])
-    let cx = Double(intrinsics[2, 0])
-    let cy = Double(intrinsics[2, 1])
+    let fx = Double(intrinsics.columns.0.x)
+    let fy = Double(intrinsics.columns.1.y)
+    let cx = Double(intrinsics.columns.2.x)
+    let cy = Double(intrinsics.columns.2.y)
     let x = (u - cx) / fx * depth
     let y = (v - cy) / fy * depth
     return SIMD3<Float>(Float(x), Float(-y), Float(-depth))
@@ -194,10 +194,10 @@ enum CameraMath {
   static func projectToSensor(_ cam: SIMD3<Float>, intrinsics: simd_float3x3) -> CGPoint? {
     let d = Double(-cam.z)
     guard d > 0.001 else { return nil }
-    let fx = Double(intrinsics[0, 0])
-    let fy = Double(intrinsics[1, 1])
-    let cx = Double(intrinsics[2, 0])
-    let cy = Double(intrinsics[2, 1])
+    let fx = Double(intrinsics.columns.0.x)
+    let fy = Double(intrinsics.columns.1.y)
+    let cx = Double(intrinsics.columns.2.x)
+    let cy = Double(intrinsics.columns.2.y)
     let u = Double(cam.x) / d * fx + cx
     let v = Double(-cam.y) / d * fy + cy
     return CGPoint(x: u, y: v)

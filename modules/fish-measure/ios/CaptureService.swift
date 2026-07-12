@@ -41,8 +41,12 @@ final class CaptureService {
           try FileManager.default.createDirectory(
             atPath: options.outputDir, withIntermediateDirectories: true)
           try self.ciContext.writeJPEGRepresentation(
-            of: oriented, to: url, colorSpace: CGColorSpaceCreateDeviceRGB(),
-            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: options.jpegQuality])
+            of: oriented, to: url,
+            colorSpace: oriented.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            options: [
+              CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String):
+                options.jpegQuality,
+            ])
           completion(url.path, Int(oriented.extent.width), Int(oriented.extent.height), source)
         } catch {
           completion(nil, 0, 0, source)
@@ -177,9 +181,9 @@ final class CaptureService {
 /// Point-cloud color is cosmetic — BT.601-ish constants are fine.
 final class ColorSampler {
   private let buffer: CVPixelBuffer
-  private let yBase: UnsafePointer<UInt8>
+  private let yBase: UnsafeMutablePointer<UInt8>
   private let yStride: Int
-  private let cbcrBase: UnsafePointer<UInt8>
+  private let cbcrBase: UnsafeMutablePointer<UInt8>
   private let cbcrStride: Int
   private let width: Int
   private let height: Int

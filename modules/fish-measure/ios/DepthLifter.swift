@@ -9,9 +9,9 @@ final class DepthSampler {
   let depthHeight: Int
   private let depthMap: CVPixelBuffer
   private let confidenceMap: CVPixelBuffer?
-  private let depthBase: UnsafePointer<Float32>
+  private let depthBase: UnsafeMutablePointer<Float32>
   private let depthStride: Int // in Float32 elements
-  private let confBase: UnsafePointer<UInt8>?
+  private let confBase: UnsafeMutablePointer<UInt8>?
   private let confStride: Int
   private let minConfidence: UInt8
 

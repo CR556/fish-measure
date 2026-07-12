@@ -366,8 +366,8 @@ class FishARView: ExpoView {
           "plyPath": plyPath as Any,
           "maskPngPath": maskPath as Any,
           "intrinsics": [
-            "fx": Double(intr[0, 0]), "fy": Double(intr[1, 1]),
-            "cx": Double(intr[2, 0]), "cy": Double(intr[2, 1]),
+            "fx": Double(intr.columns.0.x), "fy": Double(intr.columns.1.y),
+            "cx": Double(intr.columns.2.x), "cy": Double(intr.columns.2.y),
             "width": good.frame.imageWidth, "height": good.frame.imageHeight,
           ],
           "timestamp": Date().timeIntervalSince1970 * 1000,
@@ -460,8 +460,8 @@ class FishARView: ExpoView {
         "plyPath": NSNull(),
         "maskPngPath": NSNull(),
         "intrinsics": [
-          "fx": Double(intr[0, 0]), "fy": Double(intr[1, 1]),
-          "cx": Double(intr[2, 0]), "cy": Double(intr[2, 1]),
+          "fx": Double(intr.columns.0.x), "fy": Double(intr.columns.1.y),
+          "cx": Double(intr.columns.2.x), "cy": Double(intr.columns.2.y),
           "width": frame.imageWidth, "height": frame.imageHeight,
         ],
         "measureMode": "manual",
