@@ -1,122 +1,117 @@
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useState, useSyncExternalStore } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FilterSortBar } from '../components/log/FilterSortBar';
+import { catchRevision } from '../capture/idQueue';
 import { speciesName } from '../data/species';
-import { listCatches } from '../db/catchRepo';
-import type { Catch } from '../db/types';
+import { distinctSpeciesIds, listCatches } from '../db/catchRepo';
+import type { CatchSort } from '../db/types';
 import { resolveCatchUri } from '../lib/files';
 import { formatFishLength, formatFishWeight } from '../lib/fishUnits';
 import type { RootStackParamList } from '../navigation/types';
 import { useSettings } from '../stores/settingsStore';
 
-/**
- * Newest-first catch list. M6 adds filters (species/date/length), sorts, and
- * the map tab; this version is the persistence-verification surface.
- */
+/** Newest-first catch list with sort + species filter; taps open detail. */
 export function LogScreen() {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [settings] = useSettings();
-  const [rows, setRows] = useState<Catch[]>([]);
+  const rev = useSyncExternalStore(catchRevision.subscribe, catchRevision.get);
 
-  useEffect(() => {
-    if (isFocused) {
-      setRows(listCatches());
-    }
-  }, [isFocused]);
+  const [sort, setSort] = useState<CatchSort>('newest');
+  const [selectedSpecies, setSelectedSpecies] = useState<string[]>([]);
 
-  if (rows.length === 0) {
-    return (
-      <View style={styles.empty}>
-        <Text style={styles.emptyTitle}>No catches yet</Text>
-        <Text style={styles.emptyBody}>Kept catches land here, newest first.</Text>
-      </View>
-    );
-  }
+  const speciesOptions = useMemo(
+    () => distinctSpeciesIds(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isFocused, rev]
+  );
+
+  const rows = useMemo(
+    () =>
+      listCatches(
+        selectedSpecies.length ? { speciesIds: selectedSpecies } : {},
+        sort
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isFocused, rev, sort, selectedSpecies]
+  );
+
+  const toggleSpecies = (id: string) =>
+    setSelectedSpecies((cur) => (cur.includes(id) ? cur.filter((s) => s !== id) : [...cur, id]));
 
   return (
-    <FlatList
-      style={styles.list}
-      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 24 }}
-      data={rows}
-      keyExtractor={(item) => item.id}
-      renderItem={({ item }) => (
-        <Pressable
-          style={styles.row}
-          onPress={() => navigation.navigate('CatchDetail', { catchId: item.id })}
-        >
-          <Image source={{ uri: resolveCatchUri(item.thumbPath) }} style={styles.thumb} />
-          <View style={styles.rowBody}>
-            <Text style={styles.species}>{speciesName(item.speciesId)}</Text>
-            <Text style={styles.stats}>
-              {formatFishLength(item.lengthCurvedM, settings.unitsSystem)}
-              {item.weightKg != null
-                ? ` · ${formatFishWeight(item.weightKg, settings.unitsSystem)}`
-                : ''}
-            </Text>
-            <Text style={styles.date}>{new Date(item.createdAt).toLocaleString()}</Text>
-          </View>
-        </Pressable>
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <Text style={styles.title}>Catches</Text>
+      <FilterSortBar
+        sort={sort}
+        onSort={setSort}
+        speciesOptions={speciesOptions}
+        selectedSpecies={selectedSpecies}
+        onToggleSpecies={toggleSpecies}
+        onClear={() => setSelectedSpecies([])}
+      />
+      {rows.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>
+            {selectedSpecies.length ? 'No matches' : 'No catches yet'}
+          </Text>
+          <Text style={styles.emptyBody}>
+            {selectedSpecies.length
+              ? 'Try clearing the species filter.'
+              : 'Kept catches land here, newest first.'}
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={rows}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          renderItem={({ item }) => (
+            <Pressable
+              style={styles.row}
+              onPress={() => navigation.navigate('CatchDetail', { catchId: item.id })}
+            >
+              <Image source={{ uri: resolveCatchUri(item.thumbPath) }} style={styles.thumb} />
+              <View style={styles.rowBody}>
+                <Text style={styles.species}>{speciesName(item.speciesId)}</Text>
+                <Text style={styles.stats}>
+                  {formatFishLength(item.lengthCurvedM, settings.unitsSystem)}
+                  {item.weightKg != null
+                    ? ` · ${formatFishWeight(item.weightKg, settings.unitsSystem)}`
+                    : ''}
+                </Text>
+                <Text style={styles.date}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+              </View>
+            </Pressable>
+          )}
+        />
       )}
-    />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  list: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
+  screen: { flex: 1, backgroundColor: '#000' },
+  title: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '700',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  thumb: {
-    width: 72,
-    height: 72,
-    borderRadius: 10,
-    backgroundColor: '#111',
-  },
-  rowBody: {
-    flex: 1,
-    justifyContent: 'center',
-    gap: 2,
-  },
-  species: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  stats: {
-    color: 'rgba(255,255,255,0.75)',
-    fontSize: 14,
-    fontVariant: ['tabular-nums'],
-  },
-  date: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 12,
-  },
-  empty: {
-    flex: 1,
-    backgroundColor: '#000',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    gap: 8,
-  },
-  emptyTitle: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  emptyBody: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 14,
-  },
+  row: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 10 },
+  thumb: { width: 72, height: 72, borderRadius: 10, backgroundColor: '#111' },
+  rowBody: { flex: 1, justifyContent: 'center', gap: 2 },
+  species: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  stats: { color: 'rgba(255,255,255,0.75)', fontSize: 14, fontVariant: ['tabular-nums'] },
+  date: { color: 'rgba(255,255,255,0.45)', fontSize: 12 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 },
+  emptyTitle: { color: '#fff', fontSize: 20, fontWeight: '600' },
+  emptyBody: { color: 'rgba(255,255,255,0.55)', fontSize: 14, textAlign: 'center' },
 });
