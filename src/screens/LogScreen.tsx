@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { speciesName } from '../data/species';
 import { listCatches } from '../db/catchRepo';
 import type { Catch } from '../db/types';
 import { resolveCatchUri } from '../lib/files';
@@ -50,7 +51,7 @@ export function LogScreen() {
         >
           <Image source={{ uri: resolveCatchUri(item.thumbPath) }} style={styles.thumb} />
           <View style={styles.rowBody}>
-            <Text style={styles.species}>{item.speciesId ?? 'Unknown species'}</Text>
+            <Text style={styles.species}>{speciesName(item.speciesId)}</Text>
             <Text style={styles.stats}>
               {formatFishLength(item.lengthCurvedM, settings.unitsSystem)}
               {item.weightKg != null

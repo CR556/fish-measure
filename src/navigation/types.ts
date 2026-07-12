@@ -11,6 +11,10 @@ export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabsParamList>;
   CaptureReview: { draftId: string };
   CatchDetail: { catchId: string };
+  /** Species chooser. `target` says who receives the pick. */
+  SpeciesPicker:
+    | { target: 'draft'; draftId: string; suggestions?: string[] }
+    | { target: 'catch'; catchId: string; suggestions?: string[] };
 };
 
 declare global {

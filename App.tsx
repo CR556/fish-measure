@@ -10,6 +10,7 @@ import type { RootStackParamList } from './src/navigation/types';
 import { RootTabs } from './src/navigation/RootTabs';
 import { CaptureReviewScreen } from './src/screens/CaptureReviewScreen';
 import { CatchDetailScreen } from './src/screens/CatchDetailScreen';
+import { SpeciesPickerScreen } from './src/screens/SpeciesPickerScreen';
 
 function detectCapabilities() {
   try {
@@ -41,6 +42,11 @@ export default function App() {
               name="CatchDetail"
               component={CatchDetailScreen}
               options={{ headerShown: true, title: 'Catch' }}
+            />
+            <Stack.Screen
+              name="SpeciesPicker"
+              component={SpeciesPickerScreen}
+              options={{ presentation: 'modal' }}
             />
           </Stack.Navigator>
         </NavigationContainer>

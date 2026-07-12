@@ -3,10 +3,10 @@ import React, { useCallback, useMemo } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { speciesName } from '../data/species';
 import { deleteCatch, getCatch } from '../db/catchRepo';
-import { deleteCatchDir } from '../lib/files';
+import { deleteCatchDir, resolveCatchUri } from '../lib/files';
 import { formatFishLength, formatFishLengthShort, formatFishWeight } from '../lib/fishUnits';
-import { resolveCatchUri } from '../lib/files';
 import type { RootStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CatchDetail'>;
@@ -53,7 +53,7 @@ export function CatchDetailScreen({ route, navigation }: Props) {
             {item.girthM != null ? ` · girth ${formatFishLengthShort(item.girthM, system)}` : ''}
             {item.weightKg != null ? ` · ${formatFishWeight(item.weightKg, system)}` : ''}
           </Text>
-          <Text style={styles.species}>{item.speciesId ?? 'Unknown species'}</Text>
+          <Text style={styles.species}>{speciesName(item.speciesId)}</Text>
           {item.bait ? <Text style={styles.meta}>Bait: {item.bait}</Text> : null}
           {item.notes ? <Text style={styles.meta}>{item.notes}</Text> : null}
           <Text style={styles.meta}>

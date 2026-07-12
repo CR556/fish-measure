@@ -1,18 +1,20 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { BaitSelector } from '../components/review/BaitSelector';
 import { EditableStat } from '../components/review/EditableStat';
 import { KeepDiscardBar } from '../components/review/KeepDiscardBar';
 import { draftRevision, getDraft, patchDraft } from '../capture/draft';
 import { discardDraft, keepCatch } from '../capture/persist';
+import { speciesName } from '../data/species';
 import {
   formatFishLength,
   formatFishLengthShort,
   formatFishWeight,
 } from '../lib/fishUnits';
 import { getCatchLocation } from '../lib/location';
+import { estimateWeight } from '../lib/weight';
 import type { RootStackParamList } from '../navigation/types';
 import { getSettings } from '../stores/settingsStore';
 
@@ -42,6 +44,25 @@ export function CaptureReviewScreen({ route, navigation }: Props) {
       cancelled = true;
     };
   }, [draftId, draft]);
+
+  // Auto-recompute weight from length/girth/species unless the user typed one.
+  const weightInputs = draft
+    ? `${draft.lengthCurvedM}|${draft.girthM}|${draft.speciesId}|${draft.weightEdited}`
+    : '';
+  useEffect(() => {
+    if (!draft || draft.weightEdited) return;
+    const est = estimateWeight({
+      speciesId: draft.speciesId,
+      lengthCurvedM: draft.lengthCurvedM,
+      girthM: draft.girthM,
+    });
+    const nextKg = est?.kg ?? null;
+    const nextFormula = est?.formula ?? null;
+    if (nextKg !== draft.weightKg || nextFormula !== draft.weightFormula) {
+      patchDraft(draftId, { weightKg: nextKg, weightFormula: nextFormula });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weightInputs]);
 
   const onDiscard = useCallback(() => {
     if (draft) discardDraft(draft);
@@ -107,12 +128,21 @@ export function CaptureReviewScreen({ route, navigation }: Props) {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.speciesRow}>
-            Species: <Text style={styles.speciesValue}>Unknown</Text>
-          </Text>
+          <Pressable
+            style={styles.speciesButton}
+            onPress={() => navigation.navigate('SpeciesPicker', { target: 'draft', draftId })}
+          >
+            <View>
+              <Text style={styles.speciesLabel}>Species</Text>
+              <Text style={styles.speciesValue}>
+                {draft.speciesId ? speciesName(draft.speciesId) : 'Tap to choose'}
+              </Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
           <Text style={styles.hint}>
-            Automatic fish identification arrives with the species update. You can already record
-            everything else.
+            Automatic photo identification arrives with the cloud-ID update; you can set it by hand
+            now, and the weight estimate updates with it.
           </Text>
         </View>
 
@@ -138,8 +168,11 @@ export function CaptureReviewScreen({ route, navigation }: Props) {
             label="Weight (estimated)"
             value={draft.weightKg != null ? formatFishWeight(draft.weightKg, system) : ''}
             unit=""
-            placeholder="with species update"
+            placeholder={draft.girthM != null ? 'from girth' : 'set species'}
           />
+          {draft.weightFormula ? (
+            <Text style={styles.formulaTag}>{draft.weightFormula} · approximate</Text>
+          ) : null}
         </View>
 
         <View style={styles.section}>
@@ -203,13 +236,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 18,
   },
-  speciesRow: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 16,
+  speciesButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  speciesLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
   },
   speciesValue: {
     color: '#fff',
+    fontSize: 17,
     fontWeight: '600',
+    marginTop: 2,
+  },
+  chevron: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 26,
+  },
+  formulaTag: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    paddingTop: 8,
   },
   label: {
     color: 'rgba(255,255,255,0.7)',
