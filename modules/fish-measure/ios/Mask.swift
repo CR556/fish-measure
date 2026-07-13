@@ -8,6 +8,32 @@ struct LabelMap {
   let height: Int
   let data: [UInt8]
 
+  init(width: Int, height: Int, data: [UInt8]) {
+    self.width = width
+    self.height = height
+    self.data = data
+  }
+
+  /// Zeroes every label pixel covered by the (eroded) person mask, so
+  /// instance stats, gating, and selection all operate person-free. This is
+  /// what stops the outline from circling the angler holding the fish.
+  func subtracting(person: BinaryMask, erosionPx: Int) -> LabelMap {
+    let eroded = erosionPx > 0 ? person.eroded(by: erosionPx) : person
+    var out = data
+    let sx = Double(eroded.width) / Double(width)
+    let sy = Double(eroded.height) / Double(height)
+    for y in 0..<height {
+      let oy = min(eroded.height - 1, Int(Double(y) * sy))
+      for x in 0..<width where out[y * width + x] != 0 {
+        let ox = min(eroded.width - 1, Int(Double(x) * sx))
+        if eroded.data[oy * eroded.width + ox] == 1 {
+          out[y * width + x] = 0
+        }
+      }
+    }
+    return LabelMap(width: width, height: height, data: out)
+  }
+
   init?(pixelBuffer: CVPixelBuffer) {
     CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
@@ -157,6 +183,45 @@ struct BinaryMask {
         }
         out[y * width + x] = keep
       }
+    }
+    return BinaryMask(width: width, height: height, data: out)
+  }
+
+  /// Keeps only the largest 4-connected component. Person subtraction can
+  /// shatter a merged fish+angler instance into fragments; measuring must
+  /// run on the biggest remaining piece, not a stray hand sliver.
+  func largestComponent() -> BinaryMask {
+    var labels = [Int32](repeating: 0, count: data.count)
+    var bestLabel: Int32 = 0
+    var bestCount = 0
+    var next: Int32 = 1
+    var stack: [Int] = []
+
+    for start in 0..<data.count where data[start] == 1 && labels[start] == 0 {
+      let label = next
+      next += 1
+      var count = 0
+      stack.removeAll(keepingCapacity: true)
+      stack.append(start)
+      labels[start] = label
+      while let idx = stack.popLast() {
+        count += 1
+        let x = idx % width
+        let y = idx / width
+        if x > 0, data[idx - 1] == 1, labels[idx - 1] == 0 { labels[idx - 1] = label; stack.append(idx - 1) }
+        if x < width - 1, data[idx + 1] == 1, labels[idx + 1] == 0 { labels[idx + 1] = label; stack.append(idx + 1) }
+        if y > 0, data[idx - width] == 1, labels[idx - width] == 0 { labels[idx - width] = label; stack.append(idx - width) }
+        if y < height - 1, data[idx + width] == 1, labels[idx + width] == 0 { labels[idx + width] = label; stack.append(idx + width) }
+      }
+      if count > bestCount {
+        bestCount = count
+        bestLabel = label
+      }
+    }
+    guard bestLabel != 0 else { return self }
+    var out = [UInt8](repeating: 0, count: data.count)
+    for i in 0..<data.count where labels[i] == bestLabel {
+      out[i] = 1
     }
     return BinaryMask(width: width, height: height, data: out)
   }

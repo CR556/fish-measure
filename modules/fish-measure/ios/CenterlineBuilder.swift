@@ -59,16 +59,16 @@ enum CenterlineBuilder {
     let span = tMax - tMin
     guard span > 4 else { return nil }
 
-    // Pass 3: per-bin slice stats (centroid of the slice = centerline point;
-    // s-extent = width). Also track the extreme-t pixels as tip candidates.
-    var binSumX = [Double](repeating: 0, count: bins)
-    var binSumY = [Double](repeating: 0, count: bins)
+    // Pass 3: per-bin slice extents. The centerline is NOT the slice
+    // centroids (fins yank those around → zig-zag) and the tips are NOT the
+    // extreme pixels (a tail-fork lobe adds a spurious sideways offset).
+    // Instead: fit a smooth low-degree polynomial s(t) through the slice
+    // midlines and evaluate it everywhere — including exactly at the nose
+    // and tail t-extents, so the last segment runs straight down the body
+    // axis to the tail tip with no Y offset.
     var binCount = [Int](repeating: 0, count: bins)
     var binSMin = [Double](repeating: .greatestFiniteMagnitude, count: bins)
     var binSMax = [Double](repeating: -.greatestFiniteMagnitude, count: bins)
-    var tipA = CGPoint.zero, tipB = CGPoint.zero
-    var bestTMin = Double.greatestFiniteMagnitude
-    var bestTMax = -Double.greatestFiniteMagnitude
 
     for y in 0..<mask.height {
       for x in 0..<mask.width where mask.data[y * mask.width + x] == 1 {
@@ -77,33 +77,56 @@ enum CenterlineBuilder {
         let s = rx * px + ry * py
         var bin = Int((t - tMin) / span * Double(bins))
         bin = max(0, min(bins - 1, bin))
-        binSumX[bin] += Double(x); binSumY[bin] += Double(y); binCount[bin] += 1
+        binCount[bin] += 1
         if s < binSMin[bin] { binSMin[bin] = s }
         if s > binSMax[bin] { binSMax[bin] = s }
-        if t < bestTMin { bestTMin = t; tipA = CGPoint(x: x, y: y) }
-        if t > bestTMax { bestTMax = t; tipB = CGPoint(x: x, y: y) }
       }
     }
 
-    var points: [CGPoint] = []
-    var widths: [Double] = []
-    var binCenters: [(sMid: Double, tCenter: Double)] = []
+    // Slice midlines in normalized t (conditioning for the polynomial).
+    var sliceT: [Double] = []
+    var sliceS: [Double] = []
+    var sliceW: [Double] = []
     for b in 0..<bins where binCount[b] > 0 {
-      points.append(CGPoint(x: binSumX[b] / Double(binCount[b]), y: binSumY[b] / Double(binCount[b])))
-      widths.append(max(0, binSMax[b] - binSMin[b]))
-      let tCenter = tMin + (Double(b) + 0.5) / Double(bins) * span
-      binCenters.append((sMid: (binSMin[b] + binSMax[b]) / 2, tCenter: tCenter))
+      sliceT.append((Double(b) + 0.5) / Double(bins))
+      sliceS.append((binSMin[b] + binSMax[b]) / 2)
+      sliceW.append(max(0, binSMax[b] - binSMin[b]))
     }
-    guard points.count >= max(4, bins / 4) else { return nil }
+    guard sliceT.count >= max(6, bins / 4) else { return nil }
 
-    // Light smoothing of the slice centroids (window 3).
-    points = movingAverage(points)
+    let degree = 3
+    guard var coeffs = PolyFit.fit(x: sliceT, y: sliceS, degree: degree) else { return nil }
+    // One MAD-rejection refit so fin-dominated slices don't bend the spine.
+    let residuals = zip(sliceT, sliceS).map { $1 - PolyFit.eval(coeffs, $0) }
+    let sortedAbs = residuals.map { abs($0) }.sorted()
+    let mad = sortedAbs[sortedAbs.count / 2]
+    let sigma = max(1.4826 * mad, 0.5)
+    var keptT: [Double] = [], keptS: [Double] = []
+    for (i, r) in residuals.enumerated() where abs(r) <= sigma * 2.5 {
+      keptT.append(sliceT[i])
+      keptS.append(sliceS[i])
+    }
+    if keptT.count >= degree + 2, let refit = PolyFit.fit(x: keptT, y: keptS, degree: degree) {
+      coeffs = refit
+    }
 
-    // Prepend/append the true tips so arc length reaches nose and tail.
-    points.insert(tipA, at: 0)
-    points.append(tipB)
-    widths.insert(0, at: 0)
+    func pointAt(normT: Double) -> CGPoint {
+      let t = tMin + normT * span
+      let s = PolyFit.eval(coeffs, normT)
+      return CGPoint(x: mx + t * ax + s * px, y: my + t * ay + s * py)
+    }
+
+    // Fitted centerline: exact nose extent, slice stations, exact tail extent.
+    var points: [CGPoint] = [pointAt(normT: 0)]
+    var widths: [Double] = [0]
+    for i in 0..<sliceT.count {
+      points.append(pointAt(normT: sliceT[i]))
+      widths.append(sliceW[i])
+    }
+    points.append(pointAt(normT: 1))
     widths.append(0)
+    let tipA = points[0]
+    let tipB = points[points.count - 1]
 
     // Widest station, ignoring the outer 15% of stations at each end so a
     // spread tail fin doesn't win over the belly.
@@ -114,14 +137,10 @@ enum CenterlineBuilder {
       widest = widths[i]
       widestIdx = i
     }
-    // Edge points of the widest slice, reconstructed from axis geometry.
-    let wi = min(max(widestIdx - 1, 0), binCenters.count - 1) // account for inserted tip
-    let bc = binCenters[wi]
-    let cx = mx + bc.tCenter * ax + bc.sMid * px
-    let cy = my + bc.tCenter * ay + bc.sMid * py
+    let widestCenter = points[widestIdx]
     let half = widest / 2
-    let e1 = CGPoint(x: cx + px * half, y: cy + py * half)
-    let e2 = CGPoint(x: cx - px * half, y: cy - py * half)
+    let e1 = CGPoint(x: widestCenter.x + px * half, y: widestCenter.y + py * half)
+    let e2 = CGPoint(x: widestCenter.x - px * half, y: widestCenter.y - py * half)
 
     return Centerline2D(
       points: points, widths: widths, tipA: tipA, tipB: tipB,

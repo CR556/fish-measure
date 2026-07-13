@@ -12,7 +12,8 @@ struct SegmentationConfig {
   var personMaskErosionPx: Int = 2
   var minAreaFraction: Double = 0.02
   var maxAreaFraction: Double = 0.6
-  var minAspectRatio: Double = 1.8
+  /// 1.5 floor keeps deep-bodied panfish (bluegill ≈ 1.5:1) in play.
+  var minAspectRatio: Double = 1.5
   var maxAspectRatio: Double = 10
   var priorityRegion: CGRect?          // normalized view coords
   var segmenterModelPath: String?
@@ -30,7 +31,7 @@ struct ClassifierConfig {
   /// list — the M1 spike streams raw top-5 so it can be tuned live.
   var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch"]
   var minConfidence: Double = 0.15
-  var vetoLabels: [String] = []
+  var vetoLabels: [String] = ["person", "people"]
   var modelPath: String?
   var required = false
 }

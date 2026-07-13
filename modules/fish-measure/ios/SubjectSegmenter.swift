@@ -57,8 +57,15 @@ final class SubjectSegmenter {
     let visionMs = (CFAbsoluteTimeGetCurrent() - personStart) * 1000
 
     guard let observation = subjectRequest.results?.first,
-          let labelMap = LabelMap(pixelBuffer: observation.instanceMask) else {
+          var labelMap = LabelMap(pixelBuffer: observation.instanceMask) else {
       return nil
+    }
+
+    // Carve the angler out BEFORE stats/gating/selection — a merged
+    // person+fish instance must not win selection or drive the contour.
+    if let personBuffer = personRequest?.results?.first?.pixelBuffer,
+       let person = personMask(from: personBuffer) {
+      labelMap = labelMap.subtracting(person: person, erosionPx: config.personMaskErosionPx)
     }
 
     let statsByInstance = InstanceStats.compute(from: labelMap)
@@ -138,11 +145,10 @@ final class SubjectSegmenter {
 
     guard let sel = selected else { return nil }
 
-    var mask = BinaryMask(from: labelMap, instance: sel.label)
-    if let personBuffer = personRequest?.results?.first?.pixelBuffer,
-       let person = personMask(from: personBuffer) {
-      mask.subtract(person, erosionPx: config.personMaskErosionPx)
-    }
+    // Person pixels are already gone; keep the biggest connected piece so a
+    // shattered instance doesn't hand a stray fragment to the measurer.
+    let mask = BinaryMask(from: labelMap, instance: sel.label).largestComponent()
+    guard mask.area > 16 else { return nil }
 
     let bbox = sel.stats.bbox
     return SegmentationOutput(
