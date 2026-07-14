@@ -9,7 +9,13 @@ struct SegmentationConfig {
   var depthSource: String = "smoothed" // "raw" | "smoothed"
   var minDepthConfidence: Int = 1      // ARConfidenceLevel raw value floor
   var personExclusion: Bool = true
-  var personMaskErosionPx: Int = 2
+  /// >0 shrinks the person mask; <0 GROWS it. Default grows 2px so arms the
+  /// person model misses still get carved away from the fish.
+  var personMaskErosionPx: Int = -2
+  /// Trim mask pixels whose LiDAR depth deviates from the fish's median by
+  /// more than this (meters). Kills background clutter merged into the
+  /// subject (cord/branches/structure behind the fish). 0 disables.
+  var depthTrimM: Double = 0.2
   var minAreaFraction: Double = 0.02
   var maxAreaFraction: Double = 0.6
   /// 1.5 floor keeps deep-bodied panfish (bluegill ≈ 1.5:1) in play.
@@ -29,11 +35,15 @@ struct ClassifierConfig {
   var hz: Double = 2
   /// VNClassifyImageRequest labels counted as fish evidence. JS owns this
   /// list — the M1 spike streams raw top-5 so it can be tuned live.
-  var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch"]
-  var minConfidence: Double = 0.15
-  var vetoLabels: [String] = ["person", "people"]
+  /// "animal" earned its place from field top-5 data: a real held fish read
+  /// animal/fish/trout at ~19% each.
+  var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch", "animal"]
+  var minConfidence: Double = 0.12
+  var vetoLabels: [String] = ["person", "people", "footwear", "shoe", "sneaker", "boot", "rock", "stone"]
   var modelPath: String?
-  var required = false
+  /// Field default TRUE: rocks and shoes were locking without it. A green
+  /// lock now needs some fish-ish classifier evidence.
+  var required = true
 }
 
 struct CenterlineConfig {
@@ -42,8 +52,8 @@ struct CenterlineConfig {
   var depthSampleRadiusPx: Int = 2
   var depthFitDegree: Int = 3
   var outlierRejectSigma: Double = 2.5
-  var maxGapBinFraction: Double = 0.25
-  var minValidBinFraction: Double = 0.5
+  var maxGapBinFraction: Double = 0.35
+  var minValidBinFraction: Double = 0.4
 }
 
 struct GirthConfig {
@@ -54,11 +64,13 @@ struct GirthConfig {
 
 struct StabilityConfig {
   var windowMs: Double = 750
-  var maxDeltaCm: Double = 0.5
-  var maxDeltaFraction: Double = 0.015
+  // Handheld reality: ±0.5 cm never happened in the field; auto-capture
+  // never fired. ~1 cm / 2.5% is still a tight, honest reading.
+  var maxDeltaCm: Double = 1.0
+  var maxDeltaFraction: Double = 0.025
   var minDistanceM: Double = 0.3
   var maxDistanceM: Double = 2.5
-  var minDepthCoverage: Double = 0.7
+  var minDepthCoverage: Double = 0.55
 }
 
 struct OverlayConfig {
@@ -137,6 +149,9 @@ struct DebugTimings {
   var classifyMs = 0.0
   var droppedFrames = 0
   var depthDropoutFraction = 0.0
+  /// Why the frame didn't reach a valid measurement ("" when it did):
+  /// "no-subject" | "centerline" | "depth" | "not-fish".
+  var lockBlocker = ""
 }
 
 enum Orientation {

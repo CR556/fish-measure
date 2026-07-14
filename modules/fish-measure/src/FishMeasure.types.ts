@@ -108,6 +108,8 @@ export type DebugInfoEvent = {
   classifyMs: number;
   droppedFrames: number;
   depthDropoutFraction: number;
+  /** Why the frame isn't a green lock: '' | 'no-subject' | 'centerline' | 'depth' | 'not-fish'. */
+  lockBlocker: string;
   thermalState: 'nominal' | 'fair' | 'serious' | 'critical' | 'unknown';
   timestamp: number;
 };
@@ -128,7 +130,11 @@ export type SegmentationConfig = {
   minDepthConfidence?: 0 | 1 | 2;
   /** Subtract the person-segmentation mask. Default true. */
   personExclusion?: boolean;
+  /** >0 shrinks the person mask; <0 grows it (covers missed arms). Default -2. */
   personMaskErosionPx?: number;
+  /** Trim mask pixels whose depth strays this far (m) from the fish median —
+   * removes background clutter merged into the subject. 0 disables. Default 0.2. */
+  depthTrimM?: number;
   minAreaFraction?: number;
   maxAreaFraction?: number;
   /** Elongation gates (sqrt of covariance eigenvalue ratio). */

@@ -36,6 +36,7 @@ final class FishPipeline {
   private var tapHintViewNorm: CGPoint?
   private var state = "none"
   private var missedFrames = 0
+  private var invalidStreak = 0
   private var lastGood: LastGoodResult?
 
   init(host: FishARView) {
@@ -159,11 +160,22 @@ final class FishPipeline {
       if missedFrames > 5 && state != "none" {
         resetTracking(emit: true, timestamp: tsMs)
       }
+      timings.lockBlocker = "no-subject"
       emitDebug(timings, frame: frame)
       return
     }
     missedFrames = 0
     timings.personSegMs = seg.personSegMs
+
+    // Depth-continuity trim: the fish sits at one depth; anything the
+    // subject-lift merged in from BEHIND it (cord, branches, structure) is
+    // farther away. Trim mask pixels whose LiDAR depth strays from the
+    // fish's median, then keep the largest piece.
+    var fishMask = seg.mask
+    if cfg.segmentation.depthTrimM > 0 {
+      fishMask = depthTrimmed(
+        mask: fishMask, frame: frame, tolerance: cfg.segmentation.depthTrimM, mode: mode)
+    }
 
     // 2. Classify (sub-cadence, sticky).
     let classifyStart = CFAbsoluteTimeGetCurrent()
@@ -176,12 +188,12 @@ final class FishPipeline {
 
     // 3. Contour.
     let contourStart = CFAbsoluteTimeGetCurrent()
-    let contour = ContourTracer.trace(mask: seg.mask, maxPoints: cfg.overlay.contourMaxPoints)
+    let contour = ContourTracer.trace(mask: fishMask, maxPoints: cfg.overlay.contourMaxPoints)
     timings.contourMs = (CFAbsoluteTimeGetCurrent() - contourStart) * 1000
 
     // 4. Centerline.
     let clStart = CFAbsoluteTimeGetCurrent()
-    let centerline = CenterlineBuilder.build(mask: seg.mask, config: cfg.centerline)
+    let centerline = CenterlineBuilder.build(mask: fishMask, config: cfg.centerline)
     timings.centerlineMs = (CFAbsoluteTimeGetCurrent() - clStart) * 1000
 
     // 5. Depth lift.
@@ -189,7 +201,7 @@ final class FishPipeline {
     var lifted: LiftedCenterline?
     if let centerline {
       lifted = DepthLifter.lift(
-        centerline: centerline, maskWidth: seg.mask.width, maskHeight: seg.mask.height,
+        centerline: centerline, maskWidth: fishMask.width, maskHeight: fishMask.height,
         frame: frame, config: cfg.centerline,
         minDepthConfidence: cfg.segmentation.minDepthConfidence, orientationMode: mode)
     }
@@ -202,24 +214,29 @@ final class FishPipeline {
     if let centerline, let lifted {
       girth = GirthEstimator.estimate(
         centerline: centerline, lifted: lifted,
-        maskWidth: seg.mask.width, maskHeight: seg.mask.height, frame: frame,
+        maskWidth: fishMask.width, maskHeight: fishMask.height, frame: frame,
         config: cfg.girth, depthRadius: cfg.centerline.depthSampleRadiusPx,
         minDepthConfidence: cfg.segmentation.minDepthConfidence, orientationMode: mode)
     }
 
-    // State machine.
+    // State machine + why-not-locked telemetry.
     state = (lifted != nil && fishOK) ? "locked" : "candidate"
+    if lifted == nil {
+      timings.lockBlocker = centerline == nil ? "centerline" : "depth"
+    } else if !fishOK {
+      timings.lockBlocker = "not-fish"
+    }
 
     // Coordinate conversions for the overlay.
     func maskToViewPx(_ p: CGPoint) -> CGPoint {
       let orientedNorm = CGPoint(
-        x: p.x / Double(seg.mask.width), y: p.y / Double(seg.mask.height))
+        x: p.x / Double(fishMask.width), y: p.y / Double(fishMask.height))
       let sensorNorm = Orientation.orientedToSensorNorm(orientedNorm, mode: mode)
       let viewNorm = sensorNorm.applying(frame.displayTransform)
       return CGPoint(x: viewNorm.x * frame.viewSize.width, y: viewNorm.y * frame.viewSize.height)
     }
     func maskToPhotoNorm(_ p: CGPoint) -> CGPoint {
-      CGPoint(x: p.x / Double(seg.mask.width), y: p.y / Double(seg.mask.height))
+      CGPoint(x: p.x / Double(fishMask.width), y: p.y / Double(fishMask.height))
     }
 
     var subject = SubjectSnapshot()
@@ -263,17 +280,23 @@ final class FishPipeline {
       measurement.tailPhotoNorm = maskToPhotoNorm(centerline.tipB)
       measurement.centerline3D = lifted.world
 
+      invalidStreak = 0
       gateStatus = gate.add(
         curvedM: measurement.curvedM, coverage: lifted.coverage,
         distanceM: lifted.centroidDistanceM, timestamp: frame.timestamp)
 
       lastGood = LastGoodResult(
-        subject: subject, measurement: measurement, frame: frame, mask: seg.mask,
+        subject: subject, measurement: measurement, frame: frame, mask: fishMask,
         gate: gateStatus, orientationMode: mode,
         minDepthConfidence: cfg.segmentation.minDepthConfidence)
     } else {
-      gate.reset()
-      smoother.reset()
+      // Tolerate brief dropouts: a single bad frame must not zero the
+      // stability clock or auto-capture can never accumulate its window.
+      invalidStreak += 1
+      if invalidStreak > 2 {
+        gate.reset()
+        smoother.reset()
+      }
     }
 
     emit(subject: subject, measurement: measurement, gate: gateStatus)
@@ -282,9 +305,60 @@ final class FishPipeline {
     }
   }
 
+  /// Zeroes mask pixels whose depth strays from the fish's median by more
+  /// than `tolerance` meters, then keeps the largest connected piece.
+  private func depthTrimmed(
+    mask: BinaryMask, frame: FrameInput, tolerance: Double, mode: Int
+  ) -> BinaryMask {
+    guard let sampler = DepthSampler(
+      depthMap: frame.depthMap, confidenceMap: frame.confidenceMap, minConfidence: 0)
+    else { return mask }
+
+    func depthAt(_ x: Int, _ y: Int) -> Double? {
+      let norm = CGPoint(x: Double(x) / Double(mask.width), y: Double(y) / Double(mask.height))
+      let sn = Orientation.orientedToSensorNorm(norm, mode: mode)
+      let px = CGPoint(
+        x: sn.x * Double(frame.imageWidth), y: sn.y * Double(frame.imageHeight))
+      return sampler.medianDepth(
+        atSensorPx: px, imageWidth: frame.imageWidth, imageHeight: frame.imageHeight, radius: 0)
+    }
+
+    // Median fish depth from a subsample.
+    var depths: [Double] = []
+    let stride = max(1, Int((Double(mask.area) / 3000).squareRoot().rounded(.up)))
+    var y = 0
+    while y < mask.height {
+      var x = 0
+      while x < mask.width {
+        if mask.data[y * mask.width + x] == 1, let z = depthAt(x, y) {
+          depths.append(z)
+        }
+        x += stride
+      }
+      y += stride
+    }
+    guard depths.count >= 30 else { return mask }
+    depths.sort()
+    let median = depths[depths.count / 2]
+
+    var out = mask.data
+    for py in 0..<mask.height {
+      for px in 0..<mask.width where out[py * mask.width + px] == 1 {
+        // Unreadable depth (glare dropout) stays IN — dropouts happen on the
+        // fish itself; only confidently-far pixels get trimmed.
+        if let z = depthAt(px, py), abs(z - median) > tolerance {
+          out[py * mask.width + px] = 0
+        }
+      }
+    }
+    let trimmed = BinaryMask(width: mask.width, height: mask.height, data: out).largestComponent()
+    return trimmed.area > 64 ? trimmed : mask
+  }
+
   private func resetTracking(emit: Bool, timestamp: Double) {
     state = "none"
     missedFrames = 0
+    invalidStreak = 0
     tapHintViewNorm = nil
     gate.reset()
     smoother.reset()
@@ -361,6 +435,7 @@ final class FishPipeline {
       "classifyMs": timings.classifyMs,
       "droppedFrames": timings.droppedFrames,
       "depthDropoutFraction": timings.depthDropoutFraction,
+      "lockBlocker": timings.lockBlocker,
       "thermalState": thermal,
       "timestamp": frame.timestamp * 1000,
     ]

@@ -46,6 +46,9 @@ export function DebugHud() {
           {d.thermalState}
         </Text>
       ) : null}
+      {d?.lockBlocker ? (
+        <Text style={styles.blocker}>lock blocked by: {d.lockBlocker}</Text>
+      ) : null}
     </View>
   );
 }
@@ -68,5 +71,10 @@ const styles = StyleSheet.create({
   label: {
     color: '#ffd60a',
     fontSize: 11,
+  },
+  blocker: {
+    color: '#ff9f0a',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

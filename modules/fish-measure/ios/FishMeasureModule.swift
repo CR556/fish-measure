@@ -24,7 +24,8 @@ struct SegmentationParams: Record {
   @Field var depthSource: String = "smoothed"
   @Field var minDepthConfidence: Int = 1
   @Field var personExclusion: Bool = true
-  @Field var personMaskErosionPx: Int = 2
+  @Field var personMaskErosionPx: Int = -2
+  @Field var depthTrimM: Double = 0.2
   @Field var minAreaFraction: Double = 0.02
   @Field var maxAreaFraction: Double = 0.6
   @Field var minAspectRatio: Double = 1.5
@@ -37,11 +38,11 @@ struct SegmentationParams: Record {
 struct ClassifierParams: Record {
   @Field var enabled: Bool = true
   @Field var hz: Double = 2
-  @Field var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch"]
-  @Field var minConfidence: Double = 0.15
-  @Field var vetoLabels: [String] = ["person", "people"]
+  @Field var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch", "animal"]
+  @Field var minConfidence: Double = 0.12
+  @Field var vetoLabels: [String] = ["person", "people", "footwear", "shoe", "sneaker", "boot", "rock", "stone"]
   @Field var modelPath: String?
-  @Field var required: Bool = false
+  @Field var required: Bool = true
 }
 
 struct CenterlineParams: Record {
@@ -50,8 +51,8 @@ struct CenterlineParams: Record {
   @Field var depthSampleRadiusPx: Int = 2
   @Field var depthFitDegree: Int = 3
   @Field var outlierRejectSigma: Double = 2.5
-  @Field var maxGapBinFraction: Double = 0.25
-  @Field var minValidBinFraction: Double = 0.5
+  @Field var maxGapBinFraction: Double = 0.35
+  @Field var minValidBinFraction: Double = 0.4
 }
 
 struct GirthParams: Record {
@@ -62,11 +63,11 @@ struct GirthParams: Record {
 
 struct StabilityParams: Record {
   @Field var windowMs: Double = 750
-  @Field var maxDeltaCm: Double = 0.5
-  @Field var maxDeltaFraction: Double = 0.015
+  @Field var maxDeltaCm: Double = 1.0
+  @Field var maxDeltaFraction: Double = 0.025
   @Field var minDistanceM: Double = 0.3
   @Field var maxDistanceM: Double = 2.5
-  @Field var minDepthCoverage: Double = 0.7
+  @Field var minDepthCoverage: Double = 0.55
 }
 
 struct OverlayParams: Record {

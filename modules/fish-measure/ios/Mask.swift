@@ -14,11 +14,20 @@ struct LabelMap {
     self.data = data
   }
 
-  /// Zeroes every label pixel covered by the (eroded) person mask, so
-  /// instance stats, gating, and selection all operate person-free. This is
-  /// what stops the outline from circling the angler holding the fish.
+  /// Zeroes every label pixel covered by the person mask, so instance stats,
+  /// gating, and selection all operate person-free. This is what stops the
+  /// outline from circling the angler holding the fish.
+  /// `erosionPx` > 0 shrinks the person mask (protects fish edges from an
+  /// over-broad mask); < 0 GROWS it (covers arms the person model misses).
   func subtracting(person: BinaryMask, erosionPx: Int) -> LabelMap {
-    let eroded = erosionPx > 0 ? person.eroded(by: erosionPx) : person
+    let eroded: BinaryMask
+    if erosionPx > 0 {
+      eroded = person.eroded(by: erosionPx)
+    } else if erosionPx < 0 {
+      eroded = person.dilated(by: -erosionPx)
+    } else {
+      eroded = person
+    }
     var out = data
     let sx = Double(eroded.width) / Double(width)
     let sy = Double(eroded.height) / Double(height)
@@ -182,6 +191,35 @@ struct BinaryMask {
           if ny < 0 || ny >= height || horiz[ny * width + x] == 0 { keep = 0; break }
         }
         out[y * width + x] = keep
+      }
+    }
+    return BinaryMask(width: width, height: height, data: out)
+  }
+
+  /// Separable binary dilation (horizontal then vertical window-OR).
+  func dilated(by radius: Int) -> BinaryMask {
+    guard radius > 0 else { return self }
+    var horiz = [UInt8](repeating: 0, count: data.count)
+    for y in 0..<height {
+      let row = y * width
+      for x in 0..<width {
+        var hit: UInt8 = 0
+        for dx in -radius...radius {
+          let nx = x + dx
+          if nx >= 0 && nx < width && data[row + nx] == 1 { hit = 1; break }
+        }
+        horiz[row + x] = hit
+      }
+    }
+    var out = [UInt8](repeating: 0, count: data.count)
+    for y in 0..<height {
+      for x in 0..<width {
+        var hit: UInt8 = 0
+        for dy in -radius...radius {
+          let ny = y + dy
+          if ny >= 0 && ny < height && horiz[ny * width + x] == 1 { hit = 1; break }
+        }
+        out[y * width + x] = hit
       }
     }
     return BinaryMask(width: width, height: height, data: out)

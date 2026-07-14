@@ -141,8 +141,38 @@ export function MeasureScreen() {
     });
   }, [mode, isFocused, doAutoCapture]);
 
+  // Manual flow: drop nose point, drop tail point (measures immediately),
+  // then the user RE-FRAMES so the whole fish is in the picture and presses
+  // Save — the anchors are pinned in world space, so the measurement holds
+  // while the camera moves.
   const handleManualPoint = useCallback(async () => {
     if (!viewSize) return;
+
+    if (anchorIds.length >= 2) {
+      // Save: capture with the current (re-framed) camera view.
+      if (capturing.current) return;
+      capturing.current = true;
+      try {
+        const id = Crypto.randomUUID();
+        const payload = await viewRef.current?.captureManualCatch(anchorIds[0], anchorIds[1], {
+          outputDir: catchOutputDir(id),
+          includePly: false,
+          includeMaskPng: false,
+        });
+        await viewRef.current?.clearAnchors().catch(() => {});
+        setAnchorIds([]);
+        if (payload) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          openReview(id, payload);
+        } else {
+          setStatus('Could not capture — are both points still in front of you?');
+        }
+      } finally {
+        capturing.current = false;
+      }
+      return;
+    }
+
     const result = await viewRef.current?.measureAtPoint(viewSize.w / 2, viewSize.h / 2);
     if (!result) {
       setStatus('No surface under the crosshair — move a little');
@@ -155,23 +185,14 @@ export function MeasureScreen() {
       setStatus('Point 1 set — line up the tail tip');
       return;
     }
+    const path = await viewRef.current?.measureManualPath(ids[0], ids[1], 64);
     const system = getSettings().unitsSystem;
-    const id = Crypto.randomUUID();
-    const payload = await viewRef.current?.captureManualCatch(ids[0], ids[1], {
-      outputDir: catchOutputDir(id),
-      includePly: false,
-      includeMaskPng: false,
-    });
-    await viewRef.current?.clearAnchors().catch(() => {});
-    setAnchorIds([]);
-    if (payload) {
+    if (path) {
       setStatus(
-        `${formatFishLength(payload.curvedM, system)} · ${formatFishLengthShort(payload.chordM, system)} straight`
+        `${formatFishLength(path.curvedM, system)} · ${formatFishLengthShort(path.chordM, system)} straight — frame the whole fish, then Save`
       );
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      openReview(id, payload);
     } else {
-      setStatus('Could not read the path between the points');
+      setStatus('Points set — frame the whole fish, then Save');
     }
   }, [anchorIds, viewSize, openReview]);
 

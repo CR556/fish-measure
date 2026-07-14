@@ -53,7 +53,9 @@ export function CaptureControls({ mode, manualPointCount, onCapture, onToggleMod
           <View style={styles.shutterInner} />
         </Pressable>
         {mode === 'manual' ? (
-          <Text style={styles.pointLabel}>Point {Math.min(manualPointCount + 1, 2)} of 2</Text>
+          <Text style={styles.pointLabel}>
+            {manualPointCount >= 2 ? 'Save catch' : `Point ${manualPointCount + 1} of 2`}
+          </Text>
         ) : null}
       </View>
 
