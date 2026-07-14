@@ -12,6 +12,8 @@ struct SegmentationConfig {
   /// >0 shrinks the person mask; <0 GROWS it. Default grows 2px so arms the
   /// person model misses still get carved away from the fish.
   var personMaskErosionPx: Int = -2
+  /// 0 = .balanced (fast), 1 = .accurate (better bare-arm coverage, slower).
+  var personSegQuality: Int = 0
   /// Trim mask pixels whose LiDAR depth deviates from the fish's median by
   /// more than this (meters). Kills background clutter merged into the
   /// subject (cord/branches/structure behind the fish). 0 disables.
@@ -39,7 +41,9 @@ struct ClassifierConfig {
   /// animal/fish/trout at ~19% each.
   var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch", "animal"]
   var minConfidence: Double = 0.12
-  var vetoLabels: [String] = ["person", "people", "footwear", "shoe", "sneaker", "boot", "rock", "stone"]
+  /// NO person veto: the angler is in nearly every legit catch crop, and
+  /// "person" outscoring "trout 19%" was blocking real locks in the field.
+  var vetoLabels: [String] = ["footwear", "shoe", "sneaker", "boot", "rock", "stone"]
   var modelPath: String?
   /// Field default TRUE: rocks and shoes were locking without it. A green
   /// lock now needs some fish-ish classifier evidence.

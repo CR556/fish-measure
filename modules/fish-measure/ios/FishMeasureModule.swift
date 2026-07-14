@@ -25,6 +25,7 @@ struct SegmentationParams: Record {
   @Field var minDepthConfidence: Int = 1
   @Field var personExclusion: Bool = true
   @Field var personMaskErosionPx: Int = -2
+  @Field var personSegQuality: Int = 0
   @Field var depthTrimM: Double = 0.2
   @Field var minAreaFraction: Double = 0.02
   @Field var maxAreaFraction: Double = 0.6
@@ -40,7 +41,7 @@ struct ClassifierParams: Record {
   @Field var hz: Double = 2
   @Field var acceptLabels: [String] = ["fish", "salmon", "trout", "bass", "carp", "goldfish", "koi", "pike", "catfish", "perch", "animal"]
   @Field var minConfidence: Double = 0.12
-  @Field var vetoLabels: [String] = ["person", "people", "footwear", "shoe", "sneaker", "boot", "rock", "stone"]
+  @Field var vetoLabels: [String] = ["footwear", "shoe", "sneaker", "boot", "rock", "stone"]
   @Field var modelPath: String?
   @Field var required: Bool = true
 }

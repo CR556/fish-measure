@@ -161,9 +161,44 @@ final class SessionController: NSObject, ARSessionDelegate {
     Double(simd_length(worldPoint - cameraPosition))
   }
 
-  /// Three-tier raycast fallback: LiDAR scene mesh → detected plane geometry
-  /// → estimated plane. Tier and tracking quality drive the confidence label.
+  /// Tier 0: unproject the LiDAR depth map directly at the point. The scene
+  /// mesh/plane raycasts fall through to whatever is BEHIND a handheld fish
+  /// (mesh barely forms on small held objects), which made manual points
+  /// land meters too deep. The depth map reads the fish surface itself.
+  private func depthHit(at point: CGPoint) -> RearHit? {
+    guard let frame = arView.session.currentFrame else { return nil }
+    let depth = frame.smoothedSceneDepth ?? frame.sceneDepth
+    guard let depth else { return nil }
+    let bounds = arView.bounds.size
+    guard bounds.width > 0, bounds.height > 0 else { return nil }
+
+    let viewNorm = CGPoint(x: point.x / bounds.width, y: point.y / bounds.height)
+    let sensorNorm = viewNorm.applying(
+      frame.displayTransform(for: .portrait, viewportSize: bounds).inverted())
+    guard sensorNorm.x >= 0, sensorNorm.x <= 1, sensorNorm.y >= 0, sensorNorm.y <= 1 else {
+      return nil
+    }
+    let imageW = CVPixelBufferGetWidth(frame.capturedImage)
+    let imageH = CVPixelBufferGetHeight(frame.capturedImage)
+    let px = CGPoint(x: sensorNorm.x * Double(imageW), y: sensorNorm.y * Double(imageH))
+
+    guard let sampler = DepthSampler(
+      depthMap: depth.depthMap, confidenceMap: depth.confidenceMap, minConfidence: 1),
+      let z = sampler.medianDepth(atSensorPx: px, imageWidth: imageW, imageHeight: imageH, radius: 2)
+    else { return nil }
+
+    let cam = CameraMath.unproject(u: px.x, v: px.y, depth: z, intrinsics: frame.camera.intrinsics)
+    let world = CameraMath.toWorld(cam, transform: frame.camera.transform)
+    return RearHit(
+      worldPoint: world, method: "depth", confidence: trackingNormal ? "high" : "medium")
+  }
+
+  /// Depth-map read first, then the three-tier raycast fallback: LiDAR scene
+  /// mesh → detected plane geometry → estimated plane.
   func hitTest(at point: CGPoint) -> RearHit? {
+    if let hit = depthHit(at: point) {
+      return hit
+    }
     let limited = !trackingNormal
 
     if let ray = arView.ray(through: point) {

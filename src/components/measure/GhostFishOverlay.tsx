@@ -47,8 +47,15 @@ export function GhostFishOverlay({ ghostFlat }: Props) {
 
   const state = subject?.state ?? 'none';
   const live = subject?.contour;
+  // Morph only with some fish evidence: a rock/shoe candidate keeps the
+  // ghost instead of getting a misleading yellow outline.
+  const fishEvidence = state === 'locked' || (subject?.fishScore ?? 0) >= 0.06;
   const hasFish =
-    state !== 'none' && !!live && live.length >= 6 && live.length === ghostFlat.length;
+    state !== 'none' &&
+    fishEvidence &&
+    !!live &&
+    live.length >= 6 &&
+    live.length === ghostFlat.length;
 
   if (hasFish && !prevHadFish.current) {
     morphStart.current = Date.now();

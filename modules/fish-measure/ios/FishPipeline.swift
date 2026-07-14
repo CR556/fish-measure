@@ -37,6 +37,8 @@ final class FishPipeline {
   private var state = "none"
   private var missedFrames = 0
   private var invalidStreak = 0
+  /// Last time the classifier produced fish-level evidence for this subject.
+  private var fishEvidenceAt = -1.0
   private var lastGood: LastGoodResult?
 
   init(host: FishARView) {
@@ -183,8 +185,14 @@ final class FishPipeline {
       frame: frame, bboxOrientedNorm: seg.bboxOrientedNorm,
       config: cfg.classifier, orientationMode: mode, now: frame.timestamp)
     timings.classifyMs = (CFAbsoluteTimeGetCurrent() - classifyStart) * 1000
+    // Latch fish evidence for 3 s: the crop is polluted whenever the angler's
+    // hand/arm swings through it, and a single diluted classifier tick must
+    // not drop an established lock.
+    if !classification.vetoed && classification.fishScore >= cfg.classifier.minConfidence {
+      fishEvidenceAt = frame.timestamp
+    }
     let fishOK = !classification.vetoed
-      && (!cfg.classifier.required || classification.fishScore >= cfg.classifier.minConfidence)
+      && (!cfg.classifier.required || frame.timestamp - fishEvidenceAt < 3.0)
 
     // 3. Contour.
     let contourStart = CFAbsoluteTimeGetCurrent()
@@ -305,8 +313,13 @@ final class FishPipeline {
     }
   }
 
-  /// Zeroes mask pixels whose depth strays from the fish's median by more
-  /// than `tolerance` meters, then keeps the largest connected piece.
+  /// Trims mask pixels that sit BEHIND the fish, then keeps the largest
+  /// connected piece. Reference depth = lower quartile of the mask's depths:
+  /// the fish is the nearest large surface, and anchoring to the near
+  /// cluster stays correct even when merged background is the MAJORITY of
+  /// the mask (median anchoring would trim the fish instead). One-sided:
+  /// only farther-than-fish pixels are cut. Allocation-free per-pixel reads
+  /// (the earlier median-window version dragged the whole pipeline down).
   private func depthTrimmed(
     mask: BinaryMask, frame: FrameInput, tolerance: Double, mode: Int
   ) -> BinaryMask {
@@ -314,40 +327,47 @@ final class FishPipeline {
       depthMap: frame.depthMap, confidenceMap: frame.confidenceMap, minConfidence: 0)
     else { return mask }
 
+    let imageW = Double(frame.imageWidth)
+    let imageH = Double(frame.imageHeight)
+    let invW = 1.0 / Double(mask.width)
+    let invH = 1.0 / Double(mask.height)
+
+    @inline(__always)
     func depthAt(_ x: Int, _ y: Int) -> Double? {
-      let norm = CGPoint(x: Double(x) / Double(mask.width), y: Double(y) / Double(mask.height))
+      let norm = CGPoint(x: (Double(x) + 0.5) * invW, y: (Double(y) + 0.5) * invH)
       let sn = Orientation.orientedToSensorNorm(norm, mode: mode)
-      let px = CGPoint(
-        x: sn.x * Double(frame.imageWidth), y: sn.y * Double(frame.imageHeight))
-      return sampler.medianDepth(
-        atSensorPx: px, imageWidth: frame.imageWidth, imageHeight: frame.imageHeight, radius: 0)
+      return sampler.fastDepth(
+        atSensorPx: CGPoint(x: sn.x * imageW, y: sn.y * imageH),
+        imageWidth: frame.imageWidth, imageHeight: frame.imageHeight)
     }
 
-    // Median fish depth from a subsample.
+    // Reference depth from a subsample.
     var depths: [Double] = []
+    depths.reserveCapacity(3200)
     let stride = max(1, Int((Double(mask.area) / 3000).squareRoot().rounded(.up)))
-    var y = 0
-    while y < mask.height {
-      var x = 0
-      while x < mask.width {
-        if mask.data[y * mask.width + x] == 1, let z = depthAt(x, y) {
+    var sy = 0
+    while sy < mask.height {
+      var sx = 0
+      while sx < mask.width {
+        if mask.data[sy * mask.width + sx] == 1, let z = depthAt(sx, sy) {
           depths.append(z)
         }
-        x += stride
+        sx += stride
       }
-      y += stride
+      sy += stride
     }
     guard depths.count >= 30 else { return mask }
     depths.sort()
-    let median = depths[depths.count / 2]
+    let reference = depths[depths.count / 4]
 
     var out = mask.data
     for py in 0..<mask.height {
-      for px in 0..<mask.width where out[py * mask.width + px] == 1 {
+      let row = py * mask.width
+      for px in 0..<mask.width where out[row + px] == 1 {
         // Unreadable depth (glare dropout) stays IN — dropouts happen on the
-        // fish itself; only confidently-far pixels get trimmed.
-        if let z = depthAt(px, py), abs(z - median) > tolerance {
-          out[py * mask.width + px] = 0
+        // fish itself; only confidently-farther pixels get trimmed.
+        if let z = depthAt(px, py), z - reference > tolerance {
+          out[row + px] = 0
         }
       }
     }
@@ -359,6 +379,7 @@ final class FishPipeline {
     state = "none"
     missedFrames = 0
     invalidStreak = 0
+    fishEvidenceAt = -1
     tapHintViewNorm = nil
     gate.reset()
     smoother.reset()

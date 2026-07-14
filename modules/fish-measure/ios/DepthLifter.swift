@@ -61,6 +61,15 @@ final class DepthSampler {
     return d
   }
 
+  /// Single confidence-filtered depth read at a sensor-space pixel —
+  /// allocation-free, for per-pixel bulk work like the depth trim.
+  @inline(__always)
+  func fastDepth(atSensorPx p: CGPoint, imageWidth: Int, imageHeight: Int) -> Double? {
+    let dx = Int((p.x / Double(imageWidth) * Double(depthWidth)).rounded())
+    let dy = Int((p.y / Double(imageHeight) * Double(depthHeight)).rounded())
+    return rawDepth(dx, dy)
+  }
+
   /// Median of the valid depths in a (2r+1)² window around a sensor-space
   /// pixel. Returns nil when fewer than a third of the window is valid —
   /// specular dropout country.

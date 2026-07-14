@@ -20,7 +20,7 @@ export type FishMode = 'auto' | 'manual' | 'off';
 export type MeasureMode = FishMode;
 
 export type Confidence = 'low' | 'medium' | 'high';
-export type MeasureMethod = 'mesh' | 'existingPlane' | 'estimatedPlane' | 'anchor';
+export type MeasureMethod = 'depth' | 'mesh' | 'existingPlane' | 'estimatedPlane' | 'anchor';
 export type SubjectState = 'none' | 'candidate' | 'locked';
 
 // ---------- events ----------
@@ -132,6 +132,8 @@ export type SegmentationConfig = {
   personExclusion?: boolean;
   /** >0 shrinks the person mask; <0 grows it (covers missed arms). Default -2. */
   personMaskErosionPx?: number;
+  /** 0 = balanced (fast), 1 = accurate (better bare-arm coverage, slower). */
+  personSegQuality?: 0 | 1;
   /** Trim mask pixels whose depth strays this far (m) from the fish median —
    * removes background clutter merged into the subject. 0 disables. Default 0.2. */
   depthTrimM?: number;

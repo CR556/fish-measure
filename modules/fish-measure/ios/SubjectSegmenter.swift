@@ -35,7 +35,7 @@ final class SubjectSegmenter {
     var personRequest: VNGeneratePersonSegmentationRequest?
     if config.personExclusion {
       let req = VNGeneratePersonSegmentationRequest()
-      req.qualityLevel = .balanced
+      req.qualityLevel = config.personSegQuality == 1 ? .accurate : .balanced
       req.outputPixelFormat = kCVPixelFormatType_OneComponent8
       personRequest = req
     }
