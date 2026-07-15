@@ -213,8 +213,10 @@ export function MeasureScreen() {
     setMode((m) => (m === 'auto' ? 'manual' : 'auto'));
   }, [handleClear]);
 
+  // hz 7: subject-lift on-device runs ~80+ ms; at 10 Hz the vision queue
+  // saturates and the overlay lags behind the camera. 7 Hz keeps headroom.
   const segmentationProp = useMemo(
-    () => (ghost ? { priorityRegion: ghost.regionNorm } : undefined),
+    () => (ghost ? { hz: 7, priorityRegion: ghost.regionNorm } : { hz: 7 }),
     [ghost]
   );
 
@@ -232,6 +234,9 @@ export function MeasureScreen() {
           mode={mode}
           updateHz={30}
           showNativeMarkers={false}
+          // Scene meshing only serves manual-mode raycast fallbacks (manual
+          // anchors are depth-map-first now); off in auto = real perf headroom.
+          enableSceneReconstruction={mode === 'manual'}
           segmentation={segmentationProp}
           overlay={{ contourMaxPoints: CONTOUR_POINTS, emitCenterline: true }}
           debugMode={showDebug}
