@@ -47,15 +47,11 @@ export function GhostFishOverlay({ ghostFlat }: Props) {
 
   const state = subject?.state ?? 'none';
   const live = subject?.contour;
-  // Morph only with some fish evidence: a rock/shoe candidate keeps the
-  // ghost instead of getting a misleading yellow outline.
-  const fishEvidence = state === 'locked' || (subject?.fishScore ?? 0) >= 0.06;
+  // Morph on any candidate: the live outline is the user's feedback that
+  // detection sees SOMETHING (round 3 hid it behind a fish-evidence gate and
+  // the app felt dead). Yellow = candidate, green = locked.
   const hasFish =
-    state !== 'none' &&
-    fishEvidence &&
-    !!live &&
-    live.length >= 6 &&
-    live.length === ghostFlat.length;
+    state !== 'none' && !!live && live.length >= 6 && live.length === ghostFlat.length;
 
   if (hasFish && !prevHadFish.current) {
     morphStart.current = Date.now();

@@ -45,9 +45,11 @@ struct ClassifierConfig {
   /// "person" outscoring "trout 19%" was blocking real locks in the field.
   var vetoLabels: [String] = ["footwear", "shoe", "sneaker", "boot", "rock", "stone"]
   var modelPath: String?
-  /// Field default TRUE: rocks and shoes were locking without it. A green
-  /// lock now needs some fish-ish classifier evidence.
-  var required = true
+  /// FALSE after field round 3: real fish hover around fishScore ~0.19 on a
+  /// clean frame and dip below any usable bar in messy scenes — requiring
+  /// evidence blocked every lock. Geometry + person carving + depth trim
+  /// carry detection; the veto list still stops rock/shoe locks.
+  var required = false
 }
 
 struct CenterlineConfig {

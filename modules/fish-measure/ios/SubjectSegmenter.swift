@@ -20,6 +20,11 @@ struct SegmentationOutput {
 final class SubjectSegmenter {
   private var customModel: VNCoreMLModel?
   private var loadedModelPath: String?
+  // Person segmentation is the second-most expensive Vision call and people
+  // move slowly relative to the frame rate — refresh at ~2.5 Hz and reuse.
+  private var cachedPersonMask: BinaryMask?
+  private var personMaskAt = -1.0
+  private let personRefreshInterval = 0.4
 
   func segment(
     frame: FrameInput,
@@ -33,7 +38,9 @@ final class SubjectSegmenter {
 
     let subjectRequest = VNGenerateForegroundInstanceMaskRequest()
     var personRequest: VNGeneratePersonSegmentationRequest?
-    if config.personExclusion {
+    let personDue = config.personExclusion
+      && (cachedPersonMask == nil || frame.timestamp - personMaskAt > personRefreshInterval)
+    if personDue {
       let req = VNGeneratePersonSegmentationRequest()
       req.qualityLevel = config.personSegQuality == 1 ? .accurate : .balanced
       req.outputPixelFormat = kCVPixelFormatType_OneComponent8
@@ -63,8 +70,16 @@ final class SubjectSegmenter {
 
     // Carve the angler out BEFORE stats/gating/selection — a merged
     // person+fish instance must not win selection or drive the contour.
-    if let personBuffer = personRequest?.results?.first?.pixelBuffer,
-       let person = personMask(from: personBuffer) {
+    if personDue {
+      if let personBuffer = personRequest?.results?.first?.pixelBuffer,
+         let person = personMask(from: personBuffer) {
+        cachedPersonMask = person
+      } else {
+        cachedPersonMask = nil // ran and found no person — don't reuse stale
+      }
+      personMaskAt = frame.timestamp
+    }
+    if config.personExclusion, let person = cachedPersonMask {
       labelMap = labelMap.subtracting(person: person, erosionPx: config.personMaskErosionPx)
     }
 

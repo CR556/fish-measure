@@ -182,9 +182,12 @@ final class SessionController: NSObject, ARSessionDelegate {
     let imageH = CVPixelBufferGetHeight(frame.capturedImage)
     let px = CGPoint(x: sensorNorm.x * Double(imageW), y: sensorNorm.y * Double(imageH))
 
+    // Near-biased read: aimed at a fish nose, half the window hangs off onto
+    // background — a median answers "background" and the anchor lands meters
+    // deep. Confidence 0: an edge reading beats a plane raycast fallback.
     guard let sampler = DepthSampler(
-      depthMap: depth.depthMap, confidenceMap: depth.confidenceMap, minConfidence: 1),
-      let z = sampler.medianDepth(atSensorPx: px, imageWidth: imageW, imageHeight: imageH, radius: 2)
+      depthMap: depth.depthMap, confidenceMap: depth.confidenceMap, minConfidence: 0),
+      let z = sampler.nearDepth(atSensorPx: px, imageWidth: imageW, imageHeight: imageH, radius: 3)
     else { return nil }
 
     let cam = CameraMath.unproject(u: px.x, v: px.y, depth: z, intrinsics: frame.camera.intrinsics)

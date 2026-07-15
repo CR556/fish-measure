@@ -43,7 +43,7 @@ struct ClassifierParams: Record {
   @Field var minConfidence: Double = 0.12
   @Field var vetoLabels: [String] = ["footwear", "shoe", "sneaker", "boot", "rock", "stone"]
   @Field var modelPath: String?
-  @Field var required: Bool = true
+  @Field var required: Bool = false
 }
 
 struct CenterlineParams: Record {

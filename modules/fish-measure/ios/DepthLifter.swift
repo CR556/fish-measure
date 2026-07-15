@@ -70,6 +70,27 @@ final class DepthSampler {
     return rawDepth(dx, dy)
   }
 
+  /// Near-biased read: the lower quartile of valid depths in the window.
+  /// For a point the user aimed AT an object (manual anchors), half the
+  /// window can hang off the edge onto far background — the median then
+  /// answers "background", this answers "the object".
+  func nearDepth(atSensorPx p: CGPoint, imageWidth: Int, imageHeight: Int, radius: Int) -> Double? {
+    let dx = Int((p.x / Double(imageWidth) * Double(depthWidth)).rounded())
+    let dy = Int((p.y / Double(imageHeight) * Double(depthHeight)).rounded())
+    var vals: [Double] = []
+    vals.reserveCapacity((2 * radius + 1) * (2 * radius + 1))
+    for oy in -radius...radius {
+      for ox in -radius...radius {
+        if let d = rawDepth(dx + ox, dy + oy) {
+          vals.append(d)
+        }
+      }
+    }
+    guard vals.count >= 3 else { return nil }
+    vals.sort()
+    return vals[vals.count / 4]
+  }
+
   /// Median of the valid depths in a (2r+1)² window around a sensor-space
   /// pixel. Returns nil when fewer than a third of the window is valid —
   /// specular dropout country.

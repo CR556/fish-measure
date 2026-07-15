@@ -341,7 +341,10 @@ final class FishPipeline {
         imageWidth: frame.imageWidth, imageHeight: frame.imageHeight)
     }
 
-    // Reference depth from a subsample.
+    // Reference depth = the DOMINANT depth cluster (histogram mode). The
+    // fish is the biggest coherent surface in the subject; anchoring on the
+    // nearest cluster (previous approach) latched onto net edges/hands in
+    // FRONT of the fish and trimmed the fish itself away.
     var depths: [Double] = []
     depths.reserveCapacity(3200)
     let stride = max(1, Int((Double(mask.area) / 3000).squareRoot().rounded(.up)))
@@ -357,16 +360,33 @@ final class FishPipeline {
       sy += stride
     }
     guard depths.count >= 30 else { return mask }
-    depths.sort()
-    let reference = depths[depths.count / 4]
 
+    let binSize = 0.05
+    var counts: [Int: Int] = [:]
+    for z in depths {
+      counts[Int(z / binSize), default: 0] += 1
+    }
+    guard let modal = counts.max(by: {
+      $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key // ties → nearer bin
+    })?.key else { return mask }
+    var sum = 0.0
+    var n = 0
+    for z in depths where abs(Int(z / binSize) - modal) <= 1 {
+      sum += z
+      n += 1
+    }
+    guard n > 0 else { return mask }
+    let reference = sum / Double(n)
+
+    // Two-sided trim: background BEHIND the fish and obstructions IN FRONT
+    // (net edge, rod tip) both get cut; only the fish's depth shell stays.
     var out = mask.data
     for py in 0..<mask.height {
       let row = py * mask.width
       for px in 0..<mask.width where out[row + px] == 1 {
         // Unreadable depth (glare dropout) stays IN — dropouts happen on the
-        // fish itself; only confidently-farther pixels get trimmed.
-        if let z = depthAt(px, py), z - reference > tolerance {
+        // fish itself; only confidently-out-of-shell pixels get trimmed.
+        if let z = depthAt(px, py), abs(z - reference) > tolerance {
           out[row + px] = 0
         }
       }
