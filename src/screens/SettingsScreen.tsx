@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiKeySection } from '../components/settings/ApiKeySection';
+import { FishModelSection } from '../components/settings/FishModelSection';
 import { useSettings } from '../stores/settingsStore';
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -82,6 +83,8 @@ export function SettingsScreen() {
         />
       </Row>
 
+      <View style={styles.divider} />
+      <FishModelSection />
       <View style={styles.divider} />
       <ApiKeySection />
     </ScrollView>

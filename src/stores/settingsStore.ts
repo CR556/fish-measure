@@ -13,6 +13,8 @@ export type Settings = {
   saveToPhotosOnKeep: boolean;
   /** Which Claude model identifies the catch. Key lives in secure store. */
   aiModel: AiModelChoice;
+  /** Use the custom fish segmentation model (when downloaded). */
+  customModelEnabled: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -21,6 +23,7 @@ const DEFAULTS: Settings = {
   gpsEnabled: true,
   saveToPhotosOnKeep: false,
   aiModel: 'haiku',
+  customModelEnabled: true,
 };
 
 const STORAGE_KEY = 'fish-measure.settings';

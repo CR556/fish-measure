@@ -23,6 +23,7 @@ import { ManualOverlay } from '../components/measure/ManualOverlay';
 import { MeasurePill } from '../components/measure/MeasurePill';
 import { draftFromPayload, putDraft } from '../capture/draft';
 import { catchOutputDir } from '../lib/files';
+import { fishModelStore } from '../lib/fishModel';
 import { formatFishLength, formatFishLengthShort } from '../lib/fishUnits';
 import { ghostForView } from '../lib/ghostPath';
 import type { RootStackParamList } from '../navigation/types';
@@ -213,11 +214,19 @@ export function MeasureScreen() {
     setMode((m) => (m === 'auto' ? 'manual' : 'auto'));
   }, [handleClear]);
 
+  const modelState = React.useSyncExternalStore(fishModelStore.subscribe, fishModelStore.get);
+  const customModelPath =
+    settings.customModelEnabled && modelState.status === 'ready' ? modelState.path : undefined;
+
   // hz 7: subject-lift on-device runs ~80+ ms; at 10 Hz the vision queue
   // saturates and the overlay lags behind the camera. 7 Hz keeps headroom.
   const segmentationProp = useMemo(
-    () => (ghost ? { hz: 7, priorityRegion: ghost.regionNorm } : { hz: 7 }),
-    [ghost]
+    () => ({
+      hz: 7,
+      ...(ghost ? { priorityRegion: ghost.regionNorm } : null),
+      ...(customModelPath ? { segmenterModelPath: customModelPath } : null),
+    }),
+    [ghost, customModelPath]
   );
 
   return (
