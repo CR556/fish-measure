@@ -14,6 +14,11 @@ struct SegmentationConfig {
   var personMaskErosionPx: Int = -2
   /// 0 = .balanced (fast), 1 = .accurate (better bare-arm coverage, slower).
   var personSegQuality: Int = 0
+  /// Detection frames are downscaled to this longest side before Vision
+  /// (captures stay full-res). 0 disables.
+  var visionMaxDim: Int = 1024
+  /// Custom segmenter mask cut, 0–255. Lower = more permissive masks.
+  var segmenterMaskThreshold: Int = 128
   /// Trim mask pixels whose LiDAR depth deviates from the fish's median by
   /// more than this (meters). Kills background clutter merged into the
   /// subject (cord/branches/structure behind the fish). 0 disables.

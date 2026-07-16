@@ -134,6 +134,11 @@ export type SegmentationConfig = {
   personMaskErosionPx?: number;
   /** 0 = balanced (fast), 1 = accurate (better bare-arm coverage, slower). */
   personSegQuality?: 0 | 1;
+  /** Downscale detection frames to this longest side (captures stay full-res).
+   * Fixes multi-second Vision passes on the high-res video format. Default 1024. */
+  visionMaxDim?: number;
+  /** Custom segmenter mask cut 0-255; lower = more permissive. Default 128. */
+  segmenterMaskThreshold?: number;
   /** Trim mask pixels whose depth strays this far (m) from the fish median —
    * removes background clutter merged into the subject. 0 disables. Default 0.2. */
   depthTrimM?: number;

@@ -30,10 +30,14 @@ final class SubjectSegmenter {
     frame: FrameInput,
     config: SegmentationConfig,
     tapOrientedNorm: CGPoint?,
-    priorityOrientedNorm: CGRect?
+    priorityOrientedNorm: CGRect?,
+    visionImage: CVPixelBuffer? = nil
   ) -> SegmentationOutput? {
+    // Vision sees the downscaled copy; geometry stays normalized so nothing
+    // downstream changes. The full-res buffer made subject lift take ~1.5 s.
+    let inputImage = visionImage ?? frame.capturedImage
     if let path = config.segmenterModelPath {
-      return segmentWithCustomModel(path: path, frame: frame, config: config)
+      return segmentWithCustomModel(path: path, image: inputImage, config: config)
     }
 
     let subjectRequest = VNGenerateForegroundInstanceMaskRequest()
@@ -48,7 +52,7 @@ final class SubjectSegmenter {
     }
 
     let handler = VNImageRequestHandler(
-      cvPixelBuffer: frame.capturedImage,
+      cvPixelBuffer: inputImage,
       orientation: Orientation.exif(config.orientationMode),
       options: [:])
     let personStart = CFAbsoluteTimeGetCurrent()
@@ -188,7 +192,7 @@ final class SubjectSegmenter {
   /// (OneComponent8, ≥128 = fish). Compiled (.mlmodelc) or raw (.mlmodel)
   /// paths both work.
   private func segmentWithCustomModel(
-    path: String, frame: FrameInput, config: SegmentationConfig
+    path: String, image: CVPixelBuffer, config: SegmentationConfig
   ) -> SegmentationOutput? {
     if loadedModelPath != path {
       customModel = nil
@@ -208,12 +212,13 @@ final class SubjectSegmenter {
     let request = VNCoreMLRequest(model: model)
     request.imageCropAndScaleOption = .scaleFill
     let handler = VNImageRequestHandler(
-      cvPixelBuffer: frame.capturedImage,
+      cvPixelBuffer: image,
       orientation: Orientation.exif(config.orientationMode),
       options: [:])
+    let threshold = UInt8(max(1, min(255, config.segmenterMaskThreshold)))
     guard (try? handler.perform([request])) != nil,
           let obs = request.results?.first as? VNPixelBufferObservation,
-          let mask = personMask(from: obs.pixelBuffer) else {
+          let mask = personMask(from: obs.pixelBuffer, threshold: threshold) else {
       return nil
     }
 

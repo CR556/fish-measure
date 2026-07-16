@@ -26,6 +26,8 @@ struct SegmentationParams: Record {
   @Field var personExclusion: Bool = true
   @Field var personMaskErosionPx: Int = -2
   @Field var personSegQuality: Int = 0
+  @Field var visionMaxDim: Int = 1024
+  @Field var segmenterMaskThreshold: Int = 128
   @Field var depthTrimM: Double = 0.2
   @Field var minAreaFraction: Double = 0.02
   @Field var maxAreaFraction: Double = 0.6

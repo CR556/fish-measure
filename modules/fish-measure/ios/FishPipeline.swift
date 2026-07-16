@@ -29,6 +29,7 @@ final class FishPipeline {
 
   // Touched only on `queue`.
   private var config = PipelineConfig()
+  private let downscaler = VisionDownscaler()
   private let segmenter = SubjectSegmenter()
   private let classifier = FishClassifier()
   private let gate = StabilityGate()
@@ -150,11 +151,13 @@ final class FishPipeline {
         width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
     }
 
-    // 1. Segment.
+    // 1. Segment (on a downscaled copy — captures stay full-res).
     let segStart = CFAbsoluteTimeGetCurrent()
+    let visionImage = downscaler.scale(frame.capturedImage, maxDim: cfg.segmentation.visionMaxDim)
     let seg = segmenter.segment(
       frame: frame, config: cfg.segmentation,
-      tapOrientedNorm: tapOriented, priorityOrientedNorm: priorityOriented)
+      tapOrientedNorm: tapOriented, priorityOrientedNorm: priorityOriented,
+      visionImage: visionImage)
     timings.segMs = (CFAbsoluteTimeGetCurrent() - segStart) * 1000
 
     guard let seg else {

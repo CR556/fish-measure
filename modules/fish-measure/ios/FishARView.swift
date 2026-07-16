@@ -147,6 +147,8 @@ class FishARView: ExpoView {
       cfg.segmentation.personExclusion = p.personExclusion
       cfg.segmentation.personMaskErosionPx = p.personMaskErosionPx
       cfg.segmentation.personSegQuality = p.personSegQuality
+      cfg.segmentation.visionMaxDim = p.visionMaxDim
+      cfg.segmentation.segmenterMaskThreshold = p.segmenterMaskThreshold
       cfg.segmentation.depthTrimM = p.depthTrimM
       cfg.segmentation.minAreaFraction = p.minAreaFraction
       cfg.segmentation.maxAreaFraction = p.maxAreaFraction
